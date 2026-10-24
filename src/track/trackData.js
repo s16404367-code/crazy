@@ -3,8 +3,11 @@
 // ONE data source drives everything: rendering, AI racing line, sectors,
 // checkpoints, minimap, positioning and timing all read these samples.
 //
-// Layout (100% original, ~3.5 km): main straight → fast sweepers → LONG back
-// straight → tight HAIRPIN → mid straight → CHICANE → final corner.
+// Layout (100% original, fictional, ~3.5 km): main straight → fast Turn 1
+// → west esses → LONG back straight → HAIRPIN → return straight → CHICANE
+// → final corner. The outline is authored here as a closed SVG-style
+// control-point path; docs/original-circuit.svg is generated from it.
+// No real-world circuit or web SVG is copied (project originality boundary).
 // Coordinates are metres in the XZ plane; travel direction follows the
 // control-point order. The spline is auto-scaled so lap length ≈ 3.5 km.
 
@@ -13,25 +16,26 @@ import { CONFIG } from '../config/config.js';
 
 // Original control points [x, z]. See header for the layout story.
 const RAW_POINTS = [
-  [180, 302], // A main straight (westbound)
-  [-60, 308], // B
-  [-300, 300], // C
-  [-430, 215], // D turn 1
-  [-482, 40], // E west sweepers (northbound)
-  [-468, -150], // F
-  [-365, -265], // G onto the back straight
-  [-40, -305], // H LONG BACK STRAIGHT (eastbound)
-  [260, -295], // I
-  [425, -230], // J hairpin entry / heavy braking
-  [492, -162], // K HAIRPIN apex (tight)
-  [425, -96], // L hairpin exit (westbound)
-  [238, -52], // M mid straight
-  [125, -88], // N kink turning south
-  [88, 8], // O  CHICANE swing 1
-  [168, 82], // P  CHICANE swing 2
-  [92, 152], // Q  CHICANE swing 3
-  [150, 222], // R chicane exit
-  [215, 268] // S final-corner entry → back to A
+  [195, 300], // A main straight (westbound) + pit straight
+  [-20, 307], // B
+  [-270, 300], // C
+  [-390, 240], // D fast Turn 1
+  [-455, 120], // E west sweeper
+  [-405, -20], // F esses infield swing
+  [-465, -150], // G second apex, opens to the south
+  [-345, -265], // H onto the long back straight
+  [-80, -300], // I LONG BACK STRAIGHT (eastbound)
+  [215, -282], // J
+  [405, -220], // K heavy braking
+  [492, -140], // L HAIRPIN apex (tight)
+  [430, -45], // M hairpin exit
+  [260, -8], // N return straight
+  [120, -70], // O fast kink turning south
+  [55, 30], // P CHICANE swing 1
+  [145, 105], // Q CHICANE swing 2
+  [75, 175], // R CHICANE swing 3
+  [150, 240], // S final-corner approach
+  [225, 270] // T final corner → back to A
 ];
 const START_REF = [60, 307]; // start/finish line reference on main straight
 
@@ -73,7 +77,7 @@ function smoothCircular(arr, window, passes) {
  *  Mirrors the vehicle model so AI corner speeds match real capability. */
 export function maxLateralAccel(v, grip = 1) {
   const df = Math.min((v / 60) * (v / 60), 1.5);
-  return (11 + 27 * df) * grip;
+  return (13 + 29 * df) * grip; // v0.11: stronger, less understeery limit
 }
 function cornerSpeed(curvAbs) {
   if (curvAbs < 1e-5) return 96;
@@ -185,7 +189,7 @@ export function getTrack() {
   // --- active-aero zones (§15): main straight + back straight ---
   const aeroZones = [
     { name: 'Main Straight', start: sAtRaw([205, 285]), end: sAtRaw([-250, 301]) },
-    { name: 'Back Straight', start: sAtRaw([-340, -278]), end: sAtRaw([330, -282]) }
+    { name: 'Back Straight', start: sAtRaw([-345, -265]), end: sAtRaw([330, -252]) }
   ];
 
   // --- pit lane: south/outside of the main straight. The final corner is a
@@ -203,12 +207,22 @@ export function getTrack() {
   // nine individual garages/boxes (one per driver), 24 m apart around boxS
   pit.boxes = [];
   for (let i = 0; i < 9; i++) pit.boxes.push({ index: i, s: wrapS(pit.boxS + (i - 4) * 24, L) });
+  // Two-lane pit complex: FAST lane for through traffic + BOX/service lane.
+  // pit.lat remains the box-lane centre for compatibility with older code.
+  pit.boxLat = pit.lat;
+  pit.fastLat = pitSideSign * CONFIG.pit.fastLatOffset;
+  pit.laneDividerLat = pitSideSign * CONFIG.pit.laneDividerOffset;
+  pit.innerLat = pitSideSign * CONFIG.pit.innerLatOffset;
+  pit.outerLat = pitSideSign * CONFIG.pit.outerLatOffset;
+  pit.apronStartS = wrapS(pit.entryS - 120, L); // paved blend begins before entry
+  pit.apronEndS = wrapS(pit.exitS + 120, L); // ...and continues past the exit merge
   // divider wall between circuit and pit lane, with entry/exit gaps
   pit.wallLat = pitSideSign * 7.9;
   pit.wallStartS = wrapS(pit.entryS + 60, L);
   pit.wallEndS = wrapS(pit.exitS - 40, L);
   const inPitRange = (s) => deltaS(pit.entryS, s, L) >= 0 && deltaS(s, pit.exitS, L) >= 0;
   const inPitWallRange = (s) => deltaS(pit.wallStartS, s, L) >= 0 && deltaS(s, pit.wallEndS, L) >= 0;
+  const inPitApronRange = (s) => deltaS(pit.apronStartS, s, L) >= 0 && deltaS(s, pit.apronEndS, L) >= 0;
 
   // --- per-sample barrier distances (extended on pit side + corner outsides)
   const barrierL = new Float64Array(n), barrierR = new Float64Array(n);
@@ -217,8 +231,8 @@ export function getTrack() {
     if (curv[i] > 0.007) br += 4.5; // left turn → more runoff on the right
     if (curv[i] < -0.007) bl += 4.5;
     if (inPitRange(S[i])) {
-      if (pit.lat > 0) bl = Math.max(bl, Math.abs(pit.lat) + 6);
-      else br = Math.max(br, Math.abs(pit.lat) + 6);
+      if (pit.lat > 0) bl = Math.max(bl, Math.abs(pit.outerLat) + 0.5);
+      else br = Math.max(br, Math.abs(pit.outerLat) + 0.5);
     }
     barrierL[i] = bl; barrierR[i] = br;
   }
@@ -250,6 +264,8 @@ export function getTrack() {
     pit,
     inPitRange,
     inPitWallRange,
+    inPitApronRange,
+    name: 'Aurelia Park (original fictional circuit)',
     gridSlots,
     controlPoints: points,
     rawPoints: RAW_POINTS,
@@ -257,10 +273,10 @@ export function getTrack() {
     bounds: { minX, maxX, minZ, maxZ },
     // named reference distances (for scenery / brake boards)
     refs: {
-      hairpinS: sAtRaw([492, -162]),
-      chicaneS: sAtRaw([128, 80]),
-      turn1S: sAtRaw([-430, 215]),
-      backStraightS: sAtRaw([-40, -305])
+      hairpinS: sAtRaw([492, -140]),
+      chicaneS: sAtRaw([100, 68]),
+      turn1S: sAtRaw([-390, 240]),
+      backStraightS: sAtRaw([-80, -300])
     }
   };
   return _track;

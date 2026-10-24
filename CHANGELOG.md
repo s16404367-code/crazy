@@ -1,5 +1,54 @@
 # Changelog
 
+## v0.11.0 — Handling, daylight and two-lane pit upgrade (2026-10-24)
+
+Second owner-feedback release: stagnant front tyres, poor cornering
+sensitivity/dynamics, sunset lighting, request for an SVG-style circuit,
+visible sector lines, missing yellow flags, soil gaps at pit entry/exit,
+and a single-file pit lane where a serviced car blocked the next car.
+
+### Fixed
+- Removed a physics bug that set `wheelAngle` and `braking` back to zero
+  immediately after calculating them, so the renderer's front wheels and
+  brake light now receive the real values
+- Reworked steering/dynamics: faster lock and return, sensitivity now also
+  changes lock speed for keyboard users, less aggressive speed fade, yaw
+  inertia, stronger brakes/lateral limit, trail-brake/power load effects
+  and controlled slip beyond ~72% of the lateral limit
+- Front wheels now show Ackermann angles and camber; tread grooves plus a
+  bright tread block make rolling visible from chase view; left/right wheel
+  speeds differ in corners; cockpit wheel follows driver input to ~±155°
+- Removed the two painted sector-change lines (sector timing still works)
+
+### Added / changed
+- Clear daylight scene for Clear/Overcast/Light Rain: blue sky, white
+  clouds, high sun, pale daylight fog and brighter grass/hills
+- New Aurelia Park layout: a fresh fictional closed control-point design
+  (fast Turn 1, west esses, long back straight, hairpin, return straight,
+  chicane). `docs/original-circuit.svg` is generated from the same data.
+  No real circuit/web SVG was copied, preserving the originality boundary
+- Waved yellow flags: 12 animated marshal posts (4 per sector), HUD flag,
+  race-control messages and AI slow-downs; multiple sectors can now be
+  yellow at once
+- Continuous tapered asphalt aprons connect road and pit complex 120 m
+  before entry through 120 m after exit — the soil gap is gone, and the
+  apron is a paved physics surface
+- Two-lane pit complex: FAST lane at 10.8 m for through traffic and BOX
+  lane at 15.4 m for service, separated by a painted yellow line. AI and
+  player autopilot remain in the fast lane, blend to their own box only in
+  the last ~58 m, then blend back after service
+
+### Verification
+- CODE VERIFIED: three consecutive `npm run smoke` full races passed
+  (best laps ~74 s), plus focused front-wheel, yellow-sector and
+  fast-lane-passing checks (4.6 m separation beside a servicing car);
+  production build 605 KB / 162 KB gzip; original-circuit SVG is valid
+  XML; local `/crazy/` serve HTTP 200 on load/refresh with no 404s; DOM
+  ID cross-check 99/99.
+- NOT TESTED: real-browser driving feel/appearance, player autopilot from
+  a human entry, live GitHub Pages deployment after changing the Pages
+  source to GitHub Actions, and physical Chromebook/touch performance.
+
 ## v0.10.0 — Visual and pit-autopilot upgrade (2026-10-24)
 
 Owner feedback release focused on the road appearing as grass, unclear pit

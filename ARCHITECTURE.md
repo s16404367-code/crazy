@@ -20,7 +20,7 @@ src/
                            frames, curvature, corner speeds, racing line,
                            barriers, aero zones, pit lane, grid, sectors.
                            Rendering, AI, timing, minimap all read THIS data.
-  track/trackBuilder.js    3D circuit + dusk environment from those samples;
+  track/trackBuilder.js    3D circuit + daylight environment from those samples;
                            procedural canvas textures; weather looks
   physics/vehicle.js       arcade-sim vehicle (grip-limited bicycle yaw,
                            downforce, aero, tyres, damage, barriers),
@@ -51,9 +51,10 @@ scripts/smoke-test.mjs     headless full-race simulation test (CI + local)
   model as the car physics, then made braking-feasible — AI pace therefore
   matches what the car can actually do, at every skill level.
 - **No external assets.** Models are primitives, textures are canvas art,
-  audio is synthesised. Download ≈ 155 KB gzipped; licensing risk = 0.
+  audio is synthesised. Download ≈ 162 KB gzipped; licensing risk = 0.
 - **Graceful degradation:** storage/audio/SDK failures never block a race;
   invalid physics states recover to the centreline (no soft-locks, §39).
-- **Pit lane** sits on the final-corner exit side of the main straight so
+- **Two-lane pit complex** (fast lane + box lane, tapered paved aprons)
+  sits on the final-corner exit side of the main straight so
   entry is a natural drift outward on the straight (learned from testing:
   corner-entry designs caused AI wall strikes — see CHANGELOG).

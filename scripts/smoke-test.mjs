@@ -2,7 +2,7 @@
 // Verifies: track length ≈3.5 km, a full 9-car AI race progresses without
 // NaN/invalid states, cars complete laps, lap times are sane, race finishes.
 // Run: npm run smoke
-import { getTrack } from '../src/track/trackData.js';
+import { getTrack, deltaS } from '../src/track/trackData.js';
 import { Vehicle, resolveCarCollisions } from '../src/physics/vehicle.js';
 import { AIDriver } from '../src/ai/aiDriver.js';
 import { RaceManager } from '../src/race/raceManager.js';
@@ -11,7 +11,7 @@ import { AI_DRIVERS, CONFIG } from '../src/config/config.js';
 const track = getTrack();
 console.log(`Track length: ${track.length.toFixed(1)} m  samples=${track.count}  ds=${track.ds.toFixed(2)}m`);
 console.log(`Aero zones: ${track.aeroZones.map(z => `${z.name} [${z.start.toFixed(0)}→${z.end.toFixed(0)}]`).join('  ')}`);
-console.log(`Pit: lat=${track.pit.lat} entry=${track.pit.entryS.toFixed(0)} box=${track.pit.boxS.toFixed(0)} exit=${track.pit.exitS.toFixed(0)}`);
+console.log(`Pit: fastLat=${track.pit.fastLat} boxLat=${track.pit.boxLat} entry=${track.pit.entryS.toFixed(0)} box=${track.pit.boxS.toFixed(0)} exit=${track.pit.exitS.toFixed(0)}`);
 // min corner speed on the lap (hairpin check)
 let minV = 1e9, minI = 0;
 for (let i = 0; i < track.count; i++) if (track.samples.targetSpeed[i] < minV) { minV = track.samples.targetSpeed[i]; minI = i; }
@@ -33,6 +33,22 @@ check(track.aeroZones.length === 2, 'two active-aero zones defined');
   check(ny > 0, `road ribbon winding faces UP (normal y=${ny.toFixed(1)} > 0) — road visible, not grass`);
 }
 check(track.pit.boxes.length === 9 && track.inPitWallRange(track.pit.boxS), '9 individual pit boxes + divider wall range defined');
+check(Math.abs(Math.abs(track.pit.boxLat) - Math.abs(track.pit.fastLat)) >= 4 &&
+  track.inPitApronRange(track.pit.entryS - 40) && track.inPitApronRange(track.pit.exitS + 40),
+  'pit has separate FAST/BOX lanes and paved entry/exit aprons');
+// Regression for the owner report "front tyres are stagnant": a full-lock
+// step must leave a non-zero physical wheel angle for the renderer.
+{
+  const steerCar = new Vehicle(track, { name: 'STEER-TEST', isPlayer: true, tyre: 'medium' });
+  steerCar.placeAt(100, 0, 24);
+  for (let i = 0; i < 36; i++) {
+    steerCar.step(1 / CONFIG.physicsHz,
+      { steer: 1, throttle: 0.4, brake: 0.5, aeroDesired: false },
+      { weatherGrip: 1, damageEnabled: true, locked: false });
+  }
+  check(Math.abs(steerCar.wheelAngle) > 0.12 && Math.abs(steerCar.yawRate) > 0.1 && steerCar.braking,
+    `front-wheel angle/brake state survive physics (wheel=${steerCar.wheelAngle.toFixed(3)} rad, yaw=${steerCar.yawRate.toFixed(2)})`);
+}
 
 // ---- build a 9-car field, all AI-driven (player car is AI-driven here) ----
 const profiles = [{ name: 'YOU', skill: 0.985, aggression: 0.6, tyre: 'soft' }, ...AI_DRIVERS];
@@ -55,6 +71,16 @@ race.setup(cars, LAPS);
 // force two AI onto worn tyres so the pit system is genuinely exercised
 cars[1].tyreWear = 22; cars[2].tyreWear = 27;
 const gridDist = new Map(cars.map(c => [c, c.totalDist]));
+{
+  const yellowRace = new RaceManager(track);
+  yellowRace.setup(cars, LAPS);
+  yellowRace.state = 'racing'; yellowRace.raceTime = 10;
+  cars[3].u = 0; cars[3].stoppedTimer = 2; cars[3].pitState = 'none';
+  yellowRace._updateYellowFlag();
+  check(yellowRace.yellowSectors.includes(yellowRace.sectorOf(cars[3].totalDist)),
+    'stopped car triggers a yellow-flag sector for marshal posts/AI/HUD');
+  cars[3].stoppedTimer = 0;
+}
 race.beginCountdown();
 
 const dt = 1 / CONFIG.physicsHz;
@@ -110,6 +136,38 @@ const allProgressed = cars.every(c => c.totalDist > track.length * 0.9);
 check(allProgressed, 'every car completed at least ~1 lap (none permanently stuck)');
 check(race.fastestLap && race.fastestLap.time > 55, `fastest lap recorded (${race.fastestLap ? race.fastestLap.car.name + ' ' + race.fastestLap.time.toFixed(2) + 's' : 'none'})`);
 console.log(`Max wall impact seen: ${maxWallImpact.toFixed(1)} m/s | player-test car finished P${res.findIndex(r => r.isPlayer) + 1}`);
+
+// Focused two-lane pit test: one car is being serviced in BOX lane while a
+// second car passes in FAST lane and then services at a later garage.
+{
+  const stopped = new Vehicle(track, { name: 'BOX-STOPPED', tyre: 'medium' });
+  stopped.pitBoxIndex = 2; stopped.pitBoxS = track.pit.boxes[2].s;
+  stopped.placeAt(stopped.pitBoxS, track.pit.boxLat, 0);
+  stopped.pitState = 'lane'; stopped.inPitLane = true; stopped.startPitService();
+
+  const passerProfile = { ...AI_DRIVERS[0], name: 'FAST-PASSER' };
+  const passer = new Vehicle(track, { name: passerProfile.name, tyre: 'medium' });
+  passer.pitBoxIndex = 5; passer.pitBoxS = track.pit.boxes[5].s;
+  passer.placeAt(stopped.pitBoxS - 48, track.pit.fastLat, 18);
+  passer.pitState = 'lane'; passer.inPitLane = true;
+  const passerDriver = new AIDriver(passer, passerProfile, track);
+  passerDriver.mode = 'pit'; passerDriver.pitRequested = true;
+  const pitCtx = { cars: [stopped, passer], totalRaceM: 3 * track.length, yellowSector: -1, yellowSectors: [], raceTime: 30 };
+  let passedWhileServicing = false;
+  let minLaneSeparation = Infinity;
+  for (let t = 0; t < 16; t += dt) {
+    const inp = passerDriver.update(dt, pitCtx);
+    passer.step(dt, inp, { weatherGrip: 1, damageEnabled: true, locked: false });
+    stopped.step(dt, { steer: 0, throttle: 0, brake: 1, aeroDesired: false }, { weatherGrip: 1, damageEnabled: true, locked: false });
+    resolveCarCollisions([stopped, passer], true);
+    const rel = deltaS(stopped.s, passer.s, track.length);
+    if (Math.abs(rel) < 10) minLaneSeparation = Math.min(minLaneSeparation, Math.abs(passer.lat - stopped.lat));
+    if (stopped.pitState === 'servicing' && rel > 0 && rel < 100) passedWhileServicing = true;
+    if (passer.pitStops > 0) break;
+  }
+  check(passedWhileServicing && minLaneSeparation > 3 && passer.pitStops === 1,
+    `fast-lane car passes a serviced car (separation=${minLaneSeparation.toFixed(1)} m) and stops at its later box`);
+}
 
 console.log(failures === 0 ? '\nSMOKE TEST: ALL PASS' : `\nSMOKE TEST: ${failures} FAILURES`);
 process.exit(failures === 0 ? 0 : 1);

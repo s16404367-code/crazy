@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
 <meta name="theme-color" content="#16213e" />
-<meta name="description" content="DUSK APEX — an original lightweight 3D single-seater racing game for the browser. 3.5 km dusk circuit, 8 AI rivals, tyre strategy and active aero." />
+<meta name="description" content="DUSK APEX — an original lightweight 3D single-seater racing game for the browser. 3.5 km original daylight circuit, 8 AI rivals, tyre strategy and active aero." />
 <title>DUSK APEX — Single-Seater Racing</title>
 <!-- For a CrazyGames Full Launch build only, the official SDK script would be
      added here. It is intentionally absent for GitHub Pages testing; the SDK
@@ -125,7 +125,7 @@
       </label>
       <label>Weather
         <select id="setup-weather">
-          <option value="clear">Clear (Dusk)</option>
+          <option value="clear">Clear (Day)</option>
           <option value="overcast">Overcast</option>
           <option value="rain">Light Rain — less grip</option>
         </select>
@@ -138,7 +138,7 @@
       <button id="btn-settings" class="btn">⚙ Settings</button>
       <button id="btn-help" class="btn">? Controls</button>
     </div>
-    <div class="menu-foot"><span id="version-label">v0.10.0</span> · GitHub test build · Press F11 for full screen · You start P9 of 9 — good luck!</div>
+    <div class="menu-foot"><span id="version-label">v0.11.0</span> · GitHub test build · Press F11 for full screen · You start P9 of 9 — good luck!</div>
   </div>
 </div>
 
@@ -146,7 +146,7 @@
 <div id="settings-panel" class="overlay hidden">
   <div class="menu-card">
     <h2>SETTINGS</h2>
-    <label class="set-row">Steering sensitivity <span class="set-ctrl"><input type="range" id="set-sensitivity" min="0.6" max="1.5" step="0.05" /><span id="sens-val">1.00</span></span></label>
+    <label class="set-row">Steering sensitivity <span class="set-ctrl"><input type="range" id="set-sensitivity" min="0.6" max="1.8" step="0.05" /><span id="sens-val">1.00</span></span></label>
     <label class="set-row">Graphics quality
       <select id="set-quality">
         <option value="low">Low (Chromebook)</option>
@@ -177,7 +177,7 @@
       <tr><td>Brake / Reverse</td><td><b>S</b> or <b>↓</b></td></tr>
       <tr><td>Active Aero</td><td><b>Space</b> — straights only, watch the HUD. Braking closes it.</td></tr>
       <tr><td>Camera</td><td><b>C</b> — Chase / Far / Cockpit</td></tr>
-      <tr><td>Request pit stop</td><td><b>P</b> — the pit <b>autopilot</b> takes over at pit entry and stops at <b>YOUR orange garage</b> automatically, then hands control back at pit exit</td></tr>
+      <tr><td>Request pit stop</td><td><b>P</b> — the pit <b>autopilot</b> uses the fast lane, moves into the box lane at <b>YOUR orange garage</b>, stops automatically, then hands control back at pit exit</td></tr>
       <tr><td>Next pit tyre</td><td><b>T</b> cycles Soft → Medium → Hard</td></tr>
       <tr><td>Reset car to track</td><td><b>R</b> (if stuck)</td></tr>
       <tr><td>Pause</td><td><b>Esc</b></td></tr>

@@ -29,6 +29,8 @@ export class Vehicle {
     this.steer = 0; // smoothed steering -1..1 (+ = left)
     this.yawRate = 0;
     this.wheelAngle = 0;
+    this.longitudinalAccel = 0;
+    this.slipAngle = 0;
     this.braking = false;
     this.sampleIdx = 0;
     this.s = 0; // lap distance 0..L
@@ -75,7 +77,7 @@ export class Vehicle {
     const p = getPointAt(this.track, s, lat, {});
     this.x = p.x; this.z = p.z; this.heading = p.phi;
     this.vx = p.tx * speedMS; this.vz = p.tz * speedMS;
-    this.u = speedMS; this.w = 0;
+    this.u = speedMS; this.w = 0; this.steer = 0; this.yawRate = 0; this.wheelAngle = 0;
     const proj = projectToTrack(this.track, this.x, this.z, p.idx, 120);
     this.sampleIdx = proj.idx; this.s = proj.s; this.lat = proj.lat;
     this._prevLat = proj.lat;
@@ -133,6 +135,9 @@ export class Vehicle {
 
     if (this.pitState === 'servicing') {
       this._prevLat = this.lat;
+      this.braking = true; // held on the brakes in the box
+      const straighten = Math.exp(-5 * dt);
+      this.steer *= straighten; this.wheelAngle *= straighten; this.yawRate = 0;
       this.pitTimer -= dt;
       this.rpm = CONFIG.gears.rpmIdle;
       if (this.pitTimer <= 0) {
@@ -164,26 +169,39 @@ export class Vehicle {
     const totalGrip = this.tyre.grip * wearFactor * surfaceGrip * (env.weatherGrip || 1) * dmg.gripFactor[this.damageLevel];
 
     // --- steering / yaw (grip-limited) ---
-    const steerRate = this.isPlayer ? 5.2 : 7.5;
+    const centering = Math.abs(steerTarget) < Math.abs(this.steer) && Math.sign(steerTarget) === Math.sign(this.steer);
+    const baseSteerRate = centering ? V.steerReturnRate : (this.isPlayer ? V.steerRatePlayer : V.steerRateAI);
+    const steerRate = baseSteerRate * clamp(input.steerRateScale || 1, 0.6, 1.8);
     this.steer += clamp(steerTarget - this.steer, -steerRate * dt, steerRate * dt);
-    const speedFade = Math.pow(clamp(1 - Math.abs(u) / 62, 0, 1), 1.55);
+    const speedFade = Math.pow(clamp(1 - Math.abs(u) / 62, 0, 1), 1.25);
     const maxSteer = V.maxSteerHighRad + (V.maxSteerLowRad - V.maxSteerHighRad) * speedFade;
     const wheelAngle = this.steer * maxSteer;
-    this.wheelAngle = wheelAngle;
+    this.wheelAngle = wheelAngle; // renderer MUST retain this (v0.10 bug zeroed it)
     this.braking = brake > 0.12 && u > 1;
     let maxLat = maxLateralAccel(Math.abs(u), totalGrip);
+    // Load transfer: trail-braking helps turn-in; hard throttle at low speed
+    // uses rear grip for drive, slightly reducing the combined limit.
+    maxLat *= (1 + brake * 0.06 - (Math.abs(u) < 25 ? throttle * 0.04 : 0));
     maxLat *= (this.aeroActive ? 0.92 : 1) * (0.6 + 0.4 * dmg.downforceFactor[this.damageLevel]);
     const desiredYaw = (u / V.wheelBaseM) * Math.tan(wheelAngle);
     const yawMax = Math.min(maxLat / Math.max(Math.abs(u), 3.5), 2.4);
-    this.yawRate = clamp(desiredYaw, -yawMax, yawMax);
+    const targetYaw = clamp(desiredYaw, -yawMax, yawMax);
+    const yawAlpha = 1 - Math.exp(-V.yawResponse * dt); // yaw inertia
+    this.yawRate += (targetYaw - this.yawRate) * yawAlpha;
     if (Math.abs(u) < 0.2) this.yawRate = 0;
-    this.wheelAngle = 0;
-    this.braking = false;
     this.heading += this.yawRate * dt;
 
     // --- lateral damping (tyre grip pulls velocity in line with heading) ---
-    const latRate = V.baseLatGripRate * totalGrip * (this.aeroActive ? 0.92 : 1);
+    // Beyond ~72% of the lateral limit, allow a controlled slip angle to
+    // develop instead of the old on-rails feel. Full throttle in a slow,
+    // high-lock corner loosens the rear a little more.
+    const latDemand = clamp(Math.abs(this.yawRate * u) / Math.max(maxLat, 1), 0, 1.3);
+    const slipFactor = latDemand <= 0.72 ? 1
+      : lerp(1, 0.58, clamp((latDemand - 0.72) / 0.45, 0, 1));
+    const powerSlip = throttle > 0.75 && Math.abs(u) < 32 && Math.abs(this.steer) > 0.45 ? 0.88 : 1;
+    const latRate = V.baseLatGripRate * totalGrip * (this.aeroActive ? 0.92 : 1) * slipFactor * powerSlip;
     w *= Math.exp(-latRate * dt);
+    this.slipAngle = Math.atan2(w, Math.max(Math.abs(u), 4));
 
     // --- longitudinal ---
     let topEff = V.topSpeedMS * dmg.topSpeedFactor[this.damageLevel];
@@ -206,6 +224,7 @@ export class Vehicle {
     acc -= u * 0.012; // rolling resistance
     if (this.surface === 'off') acc -= Math.sign(u) * V.offTrackDrag;
     u += acc * dt;
+    this.longitudinalAccel = acc;
     if (u < -V.reverseMaxMS) u = -V.reverseMaxMS;
 
     // --- recompose velocity in the new heading frame ---
@@ -231,9 +250,12 @@ export class Vehicle {
     // --- surface & pit-lane state ---
     const alat = Math.abs(this.lat);
     const pit = track.pit;
-    const inPitBand = track.inPitRange(this.s) &&
-      Math.sign(this.lat) === Math.sign(pit.lat) &&
-      Math.abs(alat - Math.abs(pit.lat)) < 4.4;
+    const onPitSide = Math.sign(this.lat) === Math.sign(pit.lat);
+    const inPitBand = track.inPitRange(this.s) && onPitSide &&
+      alat >= Math.abs(pit.innerLat ?? pit.lat) - 0.35 &&
+      alat <= Math.abs(pit.outerLat ?? pit.lat) + 0.5;
+    const onPitApron = track.inPitApronRange && track.inPitApronRange(this.s) && onPitSide &&
+      alat > track.roadHalfWidth && alat <= Math.abs(pit.outerLat ?? pit.lat) + 0.5;
     this.inPitLane = inPitBand;
     if (inPitBand) {
       this.surface = 'pit';
@@ -241,11 +263,9 @@ export class Vehicle {
     } else {
       if (this.pitState === 'lane' && deltaS(pit.exitS, this.s, track.length) > 0 && deltaS(pit.exitS, this.s, track.length) < 300) { this.pitState = 'none'; this.servicedThisVisit = false; }
       else if (this.pitState === 'lane' && alat <= track.roadHalfWidth && deltaS(this.pitBoxS ?? pit.boxS, this.s, track.length) > 25) { this.pitState = 'none'; this.servicedThisVisit = false; }
-      this.surface = alat <= track.roadHalfWidth ? 'road'
+      // Entry/exit blend aprons are paved and aligned with the road — no soil gap.
+      this.surface = onPitApron ? 'pit' : alat <= track.roadHalfWidth ? 'road'
         : alat <= track.roadHalfWidth + track.kerbWidth ? 'kerb' : 'off';
-    }
-    if (this.pitState === 'lane' && !inPitBand && track.inPitRange(this.s) && alat > track.roadHalfWidth) {
-      this.surface = 'off'; // gravel between road and pit lane
     }
     this.offTrack = this.surface === 'off';
     this.onKerb = this.surface === 'kerb';

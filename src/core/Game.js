@@ -7,7 +7,7 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { CONFIG, AI_DRIVERS, PLAYER_PROFILE, QUALITY_PRESETS, TYRE_ORDER } from '../config/config.js';
 import { getTrack, deltaS, getPointAt } from '../track/trackData.js';
-import { buildEnvironment, buildTrack, applyWeather } from '../track/trackBuilder.js';
+import { buildEnvironment, buildTrack, applyWeather, updateMarshalFlags } from '../track/trackBuilder.js';
 import { buildCar, updateCarVisual } from '../render/carBuilder.js';
 import { Vehicle, resolveCarCollisions } from '../physics/vehicle.js';
 import { AIDriver } from '../ai/aiDriver.js';
@@ -142,12 +142,12 @@ export class Game {
     this.camera = new THREE.PerspectiveCamera(62, this.container.clientWidth / Math.max(this.container.clientHeight, 1), 0.1, 6000);
     this.camera.position.copy(this._camPos);
 
-    await step(25, 'Dusk sky & lighting…');
+    await step(25, 'Daylight sky & lighting…');
     this.env = buildEnvironment(this.scene, this.settings.quality);
     applyWeather(this.env, this.scene, this.raceConfig.weather, this.settings.quality);
 
     await step(45, 'Laying 3.5 km of tarmac…');
-    buildTrack(this.scene, this.track, this.settings.quality);
+    this.trackVisual = buildTrack(this.scene, this.track, this.settings.quality);
 
     await step(68, 'Preparing 9 cars…');
     this._createCars();
@@ -359,6 +359,7 @@ export class Game {
       cars: this.allCars,
       totalRaceM: this.race.totalRaceM,
       yellowSector: this.race.yellowSector,
+      yellowSectors: this.race.yellowSectors,
       raceTime: this.race.raceTime
     };
 
@@ -393,7 +394,8 @@ export class Game {
     const p = this.player;
     if (this._pitAuto === 'off' && !p.servicedThisVisit && p.pitState === 'lane' && p.inPitLane && p.stoppedTimer > 0.7) {
       const toBox = Math.abs(deltaS(p.s, p.pitBoxS ?? this.track.pit.boxS, this.track.length));
-      if (toBox < 30) {
+      const boxLat = this.track.pit.boxLat ?? this.track.pit.lat;
+      if (toBox < 8 && Math.abs(p.lat - boxLat) < 3.2) {
         p.startPitService();
         this.playerPitRequested = false;
         this.hud.showMessage('PIT STOP — FRESH TYRES' + (this.raceConfig.damage && p.damageLevel > 0 ? ' + REPAIRS' : ''), 2200);
@@ -429,7 +431,7 @@ export class Game {
           this.hud.showMessage(`⚠ YELLOW FLAG — SECTOR ${e.sector + 1}`, 2600);
           break;
         case 'green':
-          this.hud.showMessage('GREEN FLAG — RACING', 1800);
+          this.hud.showMessage(`GREEN FLAG — SECTOR ${e.sector + 1}`, 1800);
           break;
         case 'finish':
           if (e.car.isPlayer) {
@@ -516,36 +518,51 @@ export class Game {
       }
     }
 
+    if (this._pitAuto === 'in' && !p.servicedThisVisit && p.pitState === 'none' && !p.inPitLane) {
+      this._pitAuto = 'off';
+      this.hud.showMessage('PIT BOX MISSED — AUTOPILOT WILL TRY AGAIN NEXT LAP', 2600);
+      return manual;
+    }
+
     let aimLat, targetSpeed, aimDist = Math.min(lookahead, 22);
     if (this._pitAuto === 'approach') {
       const blend = clamp(1 - Math.max(toEntry, 0) / 150, 0, 1);
       const base = getPointAt(track, p.s + lookahead, 0, this._autoAim);
-      aimLat = base.lineLat + (track.pit.lat - base.lineLat) * blend;
+      aimLat = base.lineLat + ((track.pit.fastLat ?? track.pit.lat) - base.lineLat) * blend;
       const raceSpeed = Math.min(track.samples.targetSpeed[p.sampleIdx], base.targetSpeed + 4) * 0.97;
       targetSpeed = Math.min(raceSpeed, CONFIG.pit.speedLimitMS + (1 - blend * blend) * 55);
       aimDist = lookahead;
     } else if (this._pitAuto === 'in') {
-      aimLat = track.pit.lat;
+      const fastLat = track.pit.fastLat ?? track.pit.lat;
+      const boxLat = track.pit.boxLat ?? track.pit.lat;
+      const boxBlend = clamp((58 - toBox) / 40, 0, 1);
+      aimLat = fastLat + (boxLat - fastLat) * boxBlend; // fast lane → own box lane
       targetSpeed = CONFIG.pit.speedLimitMS - 1;
       if (!p.servicedThisVisit && toBox < 42 && toBox > -8) {
         targetSpeed = clamp(Math.max(toBox, 0) * 0.55, 0, CONFIG.pit.speedLimitMS);
-        if (Math.abs(toBox) < 4.5 && speed < 2.4) {
+        if (Math.abs(toBox) < 4.5 && speed < 2.4 && Math.abs(p.lat - boxLat) < 3.2) {
           p.startPitService();
           this.playerPitRequested = false;
           this.hud.showMessage(`PIT STOP — YOUR GARAGE CREW AT WORK${this.raceConfig.damage && p.damageLevel > 0 ? ' (incl. repairs)' : ''}`, 2400);
           return { steer: 0, throttle: 0, brake: 1, aeroDesired: false };
         }
-      } else if (!p.servicedThisVisit && toBox <= -8) {
-        targetSpeed = 0; // failsafe: slightly past the box — stop here, crew services anyway
-        if (speed < 1 && p.inPitLane) {
-          p.startPitService();
-          this.playerPitRequested = false;
-          return { steer: 0, throttle: 0, brake: 1, aeroDesired: false };
+        if (Math.abs(toBox) < 8 && Math.abs(p.lat - boxLat) >= 3.2) {
+          targetSpeed = Math.max(targetSpeed, 4); // finish crossing into the box lane
         }
+      } else if (!p.servicedThisVisit && toBox <= -8) {
+        // Missed the box: do NOT stop in the fast lane. Carry on to the exit;
+        // the existing missed-entry protection/next-lap request handles retry.
+        aimLat = fastLat;
+        targetSpeed = CONFIG.pit.speedLimitMS - 1;
       }
     } else { // out
+      const fastLat = track.pit.fastLat ?? track.pit.lat;
+      const boxLat = track.pit.boxLat ?? track.pit.lat;
+      const sinceBox = deltaS(myBox, p.s, track.length);
+      const merge = clamp((sinceBox > 0 ? sinceBox : 0) / 45, 0, 1);
+      const laneLat = boxLat + (fastLat - boxLat) * merge;
       const pastWallEnd = deltaS(p.s, track.pit.wallEndS, track.length) < 0;
-      aimLat = pastWallEnd ? Math.sign(track.pit.lat) * (track.roadHalfWidth - 1.6) : track.pit.lat;
+      aimLat = pastWallEnd ? Math.sign(track.pit.lat) * (track.roadHalfWidth - 1.6) : laneLat;
       targetSpeed = pastWallEnd ? Math.min(track.samples.targetSpeed[p.sampleIdx], 42) : CONFIG.pit.speedLimitMS;
       const pastExit = deltaS(track.pit.exitS, p.s, track.length);
       if (pastExit > 0 && pastExit < 250 && Math.abs(p.lat) < track.roadHalfWidth) {
@@ -576,7 +593,7 @@ export class Game {
     if (p.inPitLane) {
       const toBox = deltaS(p.s, p.pitBoxS ?? this.track.pit.boxS, this.track.length);
       return toBox > 0 && toBox < 400
-        ? `PIT LANE — STOP AT YOUR ORANGE BOX ${p.pitBoxIndex + 1} (${Math.round(toBox)} m) — or press P for autopilot`
+        ? `PIT FAST LANE — YOUR ORANGE BOX ${p.pitBoxIndex + 1} IN ${Math.round(toBox)} m (move to box lane) — or press P`
         : 'PIT LANE — LIMITER ON (80 KM/H)';
     }
     if (this.playerPitRequested) return 'PIT REQUESTED — AUTOPILOT ENGAGES AT PIT ENTRY [P to cancel]';
@@ -636,7 +653,7 @@ export class Game {
       const x = lerp(car.prevX, car.x, alpha);
       const z = lerp(car.prevZ, car.z, alpha);
       car.visual.position.set(x, 0, z);
-      const slipYaw = clamp(0.55 * Math.atan2(car.w, Math.max(Math.abs(car.u), 4)), -0.32, 0.32);
+      const slipYaw = clamp(0.55 * (car.slipAngle ?? Math.atan2(car.w, Math.max(Math.abs(car.u), 4))), -0.32, 0.32);
       car.visual.rotation.set(0, lerpAngle(car.prevHeading, car.heading, alpha) + slipYaw, 0);
       updateCarVisual(car.visual, car, dt);
       // dust off-track / smoke with heavy damage
@@ -648,6 +665,7 @@ export class Game {
       }
     }
     this._updateParticles(dt);
+    if (this.trackVisual) updateMarshalFlags(this.trackVisual, this.race.yellowSectors || [], performance.now() / 1000);
 
     const p = this.player;
     // sun shadow follows the action

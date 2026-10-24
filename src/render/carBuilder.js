@@ -11,6 +11,23 @@ import * as THREE from 'three';
 
 const carbon = new THREE.MeshStandardMaterial({ color: 0x16161c, roughness: 0.65, metalness: 0.35 });
 const tyreSide = new THREE.MeshStandardMaterial({ color: 0x0b0b0d, roughness: 0.96, metalness: 0 });
+let _tyreTreadMat = null;
+function tyreTreadMaterial() {
+  if (_tyreTreadMat) return _tyreTreadMat;
+  const c = document.createElement('canvas'); c.width = 256; c.height = 64;
+  const x = c.getContext('2d');
+  x.fillStyle = '#101114'; x.fillRect(0, 0, 256, 64);
+  x.strokeStyle = '#2c2f36'; x.lineWidth = 7;
+  for (let i = -1; i < 9; i++) { // angled tread grooves: rolling reads from behind too
+    x.beginPath(); x.moveTo(i * 32, 66); x.lineTo(i * 32 + 18, -2); x.stroke();
+  }
+  x.fillStyle = '#ffd23e'; x.fillRect(0, 25, 12, 14); // one bright tread block per revolution
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(3, 1);
+  t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+  _tyreTreadMat = new THREE.MeshStandardMaterial({ map: t, roughness: 0.96, metalness: 0 });
+  return _tyreTreadMat;
+}
 const darkMetal = new THREE.MeshStandardMaterial({ color: 0x2a2a33, roughness: 0.45, metalness: 0.65 });
 
 const css = (hex) => `#${hex.toString(16).padStart(6, '0')}`;
@@ -47,7 +64,9 @@ function wheelFaceTexture(accentHex) {
   x.beginPath(); x.arc(cx, cy, 7, 0, 7); x.fill();
   // bright rotation marker on the tyre (top)
   x.fillStyle = '#ffd23e';
-  x.fillRect(cx - 13, 2, 26, 30);
+  x.fillRect(cx - 16, 1, 32, 34);
+  x.fillStyle = '#ffffff';
+  x.fillRect(cx - 9, 226, 18, 24); // smaller opposite marker
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 4;
@@ -80,17 +99,18 @@ function box(w, h, d, mat, x, y, z, parent, shadow = true) {
 
 function makeWheel(radius, width, faceMat) {
   const steer = new THREE.Group();
+  const camber = new THREE.Group(); // slight negative camber, set by side in buildCar
   const spin = new THREE.Group();
-  steer.add(spin);
+  steer.add(camber); camber.add(spin);
   // one cylinder, 3 material groups: tread | outer face | inner face
   const tyre = new THREE.Mesh(
     new THREE.CylinderGeometry(radius, radius, width, 22),
-    [tyreSide, faceMat, faceMat]
+    [tyreTreadMaterial(), faceMat, faceMat]
   );
   tyre.rotation.z = Math.PI / 2; // cylinder axis → X (axle)
   tyre.castShadow = true;
   spin.add(tyre);
-  return { steer, spin, radius, baseY: 0 };
+  return { steer, camber, spin, radius, baseY: 0, x: 0, _spin: 0 };
 }
 
 export function buildCar(colorHex, accentHex, number = 7) {
@@ -201,7 +221,8 @@ export function buildCar(colorHex, accentHex, number = 7) {
     const isFront = key[0] === 'f';
     const w = makeWheel(isFront ? 0.36 : 0.38, isFront ? 0.4 : 0.45, faceMat);
     w.steer.position.set(x, y, z);
-    w.baseY = y;
+    w.baseY = y; w.x = x;
+    w.camber.rotation.z = Math.sign(x) * 0.045;
     car.add(w.steer);
     wheels[key] = w;
     const arm = box(Math.abs(x) - 0.2, 0.05, 0.05, darkMetal, x / 2, y + 0.05, z, car, false);
@@ -223,12 +244,26 @@ export function updateCarVisual(carGroup, vehicle, dt) {
   const ud = carGroup.userData;
   const speed = Math.abs(vehicle.u);
 
-  // wheel spin + front steering (now clearly visible via rim texture)
-  ud.spinAngle += (vehicle.u / 0.37) * dt;
-  for (const w of Object.values(ud.wheels)) w.spin.rotation.x = ud.spinAngle;
+  // Wheel spin (with left/right speed difference in a turn) + REAL front
+  // steering. vehicle.wheelAngle is the physical road-wheel angle; the
+  // v0.10 physics bug that zeroed it every step is fixed in vehicle.js.
+  for (const w of Object.values(ud.wheels)) {
+    const wheelSpeed = vehicle.u - vehicle.yawRate * w.x;
+    w._spin += (wheelSpeed / w.radius) * dt;
+    w.spin.rotation.x = w._spin;
+  }
+  ud.spinAngle = ud.wheels.fl._spin;
   const steerVis = vehicle.wheelAngle || 0;
-  ud.wheels.fl.steer.rotation.y = steerVis;
-  ud.wheels.fr.steer.rotation.y = steerVis;
+  const ackermann = (angle, x) => {
+    if (Math.abs(angle) < 0.001) return 0;
+    const wheelBase = 3.1, halfTrack = 0.95;
+    const radius = wheelBase / Math.tan(Math.abs(angle));
+    const inner = Math.sign(angle) === Math.sign(x); // +x is the driver's left here
+    const wheelRadius = Math.max(radius + (inner ? -halfTrack : halfTrack), wheelBase * 0.55);
+    return Math.sign(angle) * Math.atan(wheelBase / wheelRadius);
+  };
+  ud.wheels.fl.steer.rotation.y = ackermann(steerVis, ud.wheels.fl.x);
+  ud.wheels.fr.steer.rotation.y = ackermann(steerVis, ud.wheels.fr.x);
 
   // suspension: wheels bounce over kerbs/grass, gentle tremor at speed
   ud._phase += dt * (4 + speed * 0.55);
@@ -241,7 +276,7 @@ export function updateCarVisual(carGroup, vehicle, dt) {
   });
 
   // cockpit steering wheel turns with driver input (~3.5× road-wheel angle)
-  ud.steerWheel.rotation.z = -steerVis * 3.5;
+  ud.steerWheel.rotation.z = -vehicle.steer * 2.7; // driver input ≈ ±155° at full lock
 
   // driver looks into the corner + subtle helmet bob
   const targetYaw = clampN(vehicle.steer * 0.42 + vehicle.yawRate * 0.1, -0.55, 0.55);
@@ -257,7 +292,7 @@ export function updateCarVisual(carGroup, vehicle, dt) {
   // body roll/pitch (weight transfer, stronger than v0.9)
   const latAcc = vehicle.yawRate * vehicle.u;
   const targetRoll = clampN(latAcc * 0.0028, -0.075, 0.075);
-  const accel = (vehicle.u - (ud._lastU ?? vehicle.u)) / Math.max(dt, 1e-4);
+  const accel = vehicle.longitudinalAccel ?? ((vehicle.u - (ud._lastU ?? vehicle.u)) / Math.max(dt, 1e-4));
   ud._lastU = vehicle.u;
   const targetPitch = clampN(-accel * 0.0021, -0.05, 0.062);
   ud.rollSmooth += (targetRoll - ud.rollSmooth) * Math.min(dt * 8, 1);

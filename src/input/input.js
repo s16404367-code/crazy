@@ -104,6 +104,7 @@ export class InputManager {
 
     return {
       steer: clamp(steer * sensitivity, -1, 1),
+      steerRateScale: clamp(sensitivity, 0.6, 1.8),
       throttle: clamp(throttle, 0, 1),
       brake: clamp(brake, 0, 1)
     };

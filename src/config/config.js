@@ -3,7 +3,7 @@
 // no magic numbers scattered through the code).
 
 export const CONFIG = {
-  version: '0.10.0',
+  version: '0.11.0',
   title: 'DUSK APEX',
 
   // Fixed-timestep simulation (§13). Render rate is independent.
@@ -21,20 +21,24 @@ export const CONFIG = {
 
   vehicle: {
     topSpeedMS: 91, // ≈328 km/h
-    engineAccel: 12.5, // m/s² at low speed, tapers to top speed
-    brakeDecel: 17,
+    engineAccel: 13.1, // m/s² at low speed, tapers to top speed
+    brakeDecel: 19.5,
     reverseMaxMS: 9,
     dragK: 0.0, // drag is modelled via the top-speed taper + aero multiplier
     aeroTopSpeedFactor: 1.065, // active-aero top-speed benefit (balanced, §15)
     aeroDownforceFactor: 0.82, // downforce trade-off while active
     slipstreamTopSpeedFactor: 1.035,
     slipstreamAccelBonus: 1.4, // m/s²
-    baseLatGripRate: 8.2, // lateral velocity damping (arcade-sim hybrid grip)
+    baseLatGripRate: 7.6, // lateral velocity damping; softened at the limit for controllable slip
     offTrackGrip: 0.55,
     kerbGrip: 0.92,
     offTrackDrag: 2.2, // extra m/s² on grass/gravel
-    maxSteerLowRad: 0.55,
-    maxSteerHighRad: 0.085,
+    maxSteerLowRad: 0.62, // ≈36° at parking speed — front wheels visibly turn
+    maxSteerHighRad: 0.125, // ≈7° at top speed
+    steerRatePlayer: 8.6, // normalized lock/sec before sensitivity
+    steerRateAI: 9.2,
+    steerReturnRate: 11.5,
+    yawResponse: 11.5, // yaw-inertia rate (1/s): present, but not sluggish
     wheelBaseM: 3.0,
     collisionRadius: 1.18, // two circles per car
     collisionOffset: 1.55
@@ -60,7 +64,11 @@ export const CONFIG = {
   pit: {
     speedLimitMS: 22, // ≈80 km/h
     serviceTimeS: 3.0,
-    latOffset: 12.5, // signed later once track side is known (magnitude here)
+    latOffset: 15.4, // SERVICE/BOX lane centre (signed later once track side is known)
+    fastLatOffset: 10.8, // through-traffic FAST lane centre
+    laneDividerOffset: 13.1,
+    innerLatOffset: 8.25,
+    outerLatOffset: 18.8,
     playerBoxIndex: 4 // the player's own garage (highlighted orange)
   },
 
@@ -70,7 +78,7 @@ export const CONFIG = {
   },
 
   weather: {
-    clear: { grip: 1, label: 'Clear (Dusk)' },
+    clear: { grip: 1, label: 'Clear (Day)' },
     overcast: { grip: 0.97, label: 'Overcast' },
     rain: { grip: 0.82, label: 'Light Rain' }
   },

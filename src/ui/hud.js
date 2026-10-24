@@ -164,8 +164,9 @@ export class HUD {
       }
 
       if (this.el.flag) {
-        if (race.yellowSector >= 0) {
-          this.el.flag.textContent = `⚠ YELLOW FLAG — SECTOR ${race.yellowSector + 1}`;
+        const yellowSectors = race.yellowSectors || (race.yellowSector >= 0 ? [race.yellowSector] : []);
+        if (yellowSectors.length) {
+          this.el.flag.textContent = `🟨 YELLOW FLAG — SECTOR ${yellowSectors.map((x) => x + 1).join(' + ')}`;
           this.el.flag.classList.remove('hidden');
         } else this.el.flag.classList.add('hidden');
       }
