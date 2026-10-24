@@ -1,5 +1,45 @@
 # Changelog
 
+## v0.10.0 — Visual and pit-autopilot upgrade (2026-10-24)
+
+Owner feedback release focused on the road appearing as grass, unclear pit
+lane separation, static-looking cars, general graphics quality and manual
+pit-box stopping.
+
+### Fixed
+- Corrected track ribbon triangle winding: road, runoff, kerbs and pit-lane
+  faces now point upward instead of being culled and showing grass through;
+  ground ribbon materials also render double-sided as a safety net
+- Pit autopilot now refuses/aborts an impossible entry once the divider wall
+  has begun, and resetting the car cancels autopilot cleanly
+
+### Added / improved
+- Richer asphalt and grass textures, painted sector lines, pit entry/exit
+  lines, dusk cloud sprites and environment reflections for car paint
+- Physical/visual pit divider wall with yellow marker panels, entry/exit
+  gaps and orange cones; the wall is collidable in vehicle physics
+- Nine individual labelled garages and floor boxes, with the player's garage
+  and floor box highlighted orange; every AI uses its own assigned box
+- Player pit autopilot: press P, it takes over near pit entry, stops at the
+  player's own garage, waits for service, exits under the limiter and then
+  hands control back; manual stopped-at-own-box service remains as fallback
+- Animated cars: canvas spoked wheel faces with a bright rotation marker,
+  cockpit steering wheel, helmet look/bob, opening rear aero flap, wheel
+  suspension bounce, stronger roll/pitch and a visual slip-angle offset
+- Fictional racing numbers on all cars; browser F11 full-screen guidance in
+  the menu/help (no custom in-game fullscreen button, per the boundaries)
+
+### Verification
+- CODE VERIFIED: `npm run smoke` passed three consecutive full-race runs
+  (individual AI pit boxes and divider-wall physics active); production
+  build is 599 KB single-file (160 KB gzip); local `/crazy/` subdirectory
+  serve returned HTTP 200 on load/refresh with no 404 log entries; DOM ID
+  cross-check 99/99.
+- NOT TESTED: v0.10.0 appearance and player autopilot in a real browser,
+  live GitHub Pages deployment after switching Pages source to GitHub
+  Actions, and physical Chromebook/touch performance. Owner verification is
+  the next gate.
+
 ## v0.9.0 — First full playtest build (2026-10-24)
 
 Initial playable game, covering Master Prompt Phases 1–4 in a single

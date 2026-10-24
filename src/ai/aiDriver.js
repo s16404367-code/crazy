@@ -166,7 +166,7 @@ export class AIDriver {
       //  B) inside the lane: obey the limit and stop on the box (with a
       //     generous window + retry-next-lap if the box is overshot).
       const toEntry = deltaS(v.s, track.pit.entryS, track.length);
-      const toBox = deltaS(v.s, track.pit.boxS, track.length);
+      const toBox = deltaS(v.s, v.pitBoxS ?? track.pit.boxS, track.length); // this driver's own garage
       const pastEntry = toEntry <= 0 || v.inPitLane;
       const aimBase = getPointAt(track, v.s + lookahead, 0, this._aim);
       if (!pastEntry) {

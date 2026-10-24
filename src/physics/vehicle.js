@@ -51,6 +51,9 @@ export class Vehicle {
     this.pitState = 'none'; // none | lane | servicing
     this.pitTimer = 0;
     this.pitStops = 0;
+    this.pitBoxIndex = -1; // assigned garage (set by Game / tests)
+    this.pitBoxS = null;
+    this._prevLat = 0;
     this.servicedThisVisit = false; // one service per pit-lane visit (latch)
     this.wrongWay = false;
     this.stuckTimer = 0;
@@ -75,6 +78,7 @@ export class Vehicle {
     this.u = speedMS; this.w = 0;
     const proj = projectToTrack(this.track, this.x, this.z, p.idx, 120);
     this.sampleIdx = proj.idx; this.s = proj.s; this.lat = proj.lat;
+    this._prevLat = proj.lat;
     this._prevS = proj.s;
     this.prevX = this.x; this.prevZ = this.z; this.prevHeading = this.heading;
   }
@@ -128,6 +132,7 @@ export class Vehicle {
     const track = this.track;
 
     if (this.pitState === 'servicing') {
+      this._prevLat = this.lat;
       this.pitTimer -= dt;
       this.rpm = CONFIG.gears.rpmIdle;
       if (this.pitTimer <= 0) {
@@ -235,7 +240,7 @@ export class Vehicle {
       if (this.pitState === 'none') this.pitState = 'lane';
     } else {
       if (this.pitState === 'lane' && deltaS(pit.exitS, this.s, track.length) > 0 && deltaS(pit.exitS, this.s, track.length) < 300) { this.pitState = 'none'; this.servicedThisVisit = false; }
-      else if (this.pitState === 'lane' && alat <= track.roadHalfWidth && deltaS(pit.boxS, this.s, track.length) > 25) { this.pitState = 'none'; this.servicedThisVisit = false; }
+      else if (this.pitState === 'lane' && alat <= track.roadHalfWidth && deltaS(this.pitBoxS ?? pit.boxS, this.s, track.length) > 25) { this.pitState = 'none'; this.servicedThisVisit = false; }
       this.surface = alat <= track.roadHalfWidth ? 'road'
         : alat <= track.roadHalfWidth + track.kerbWidth ? 'kerb' : 'off';
     }
@@ -244,6 +249,27 @@ export class Vehicle {
     }
     this.offTrack = this.surface === 'off';
     this.onKerb = this.surface === 'kerb';
+
+    // --- pit divider wall: cannot cross except at the entry/exit gaps ---
+    if (track.inPitWallRange && track.inPitWallRange(this.s)) {
+      const wallLat = track.pit.wallLat;
+      const prevSide = Math.sign(this._prevLat - wallLat);
+      const curSide = Math.sign(this.lat - wallLat);
+      if (prevSide !== 0 && curSide !== 0 && prevSide !== curSide) {
+        const wnx = track.samples.nx[this.sampleIdx], wnz = track.samples.nz[this.sampleIdx];
+        const targetLat = wallLat + prevSide * 1.05;
+        const corr = targetLat - this.lat;
+        this.x += wnx * corr; this.z += wnz * corr;
+        const vn = this.vx * wnx + this.vz * wnz;
+        if (Math.sign(vn) === curSide && vn !== 0) {
+          this.vx -= wnx * vn * 1.25; this.vz -= wnz * vn * 1.25;
+          this.vx *= 0.9; this.vz *= 0.9;
+          this.applyDamage(Math.abs(vn), env.damageEnabled);
+          if (Math.abs(vn) > 1.5) this.events.push({ type: 'wall', impact: Math.abs(vn) });
+        }
+        this.lat = targetLat;
+      }
+    }
 
     // --- barrier collision ---
     const smp = track.samples;
@@ -305,6 +331,7 @@ export class Vehicle {
     if (!Number.isFinite(this.x + this.z + this.vx + this.vz + this.heading)) {
       this.resetToTrack();
     }
+    this._prevLat = this.lat;
   }
 }
 

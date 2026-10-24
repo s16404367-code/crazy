@@ -4,8 +4,9 @@
 // States: menu (attract orbit) → countdown → racing ⇄ paused → finished.
 
 import * as THREE from 'three';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { CONFIG, AI_DRIVERS, PLAYER_PROFILE, QUALITY_PRESETS, TYRE_ORDER } from '../config/config.js';
-import { getTrack, deltaS } from '../track/trackData.js';
+import { getTrack, deltaS, getPointAt } from '../track/trackData.js';
 import { buildEnvironment, buildTrack, applyWeather } from '../track/trackBuilder.js';
 import { buildCar, updateCarVisual } from '../render/carBuilder.js';
 import { Vehicle, resolveCarCollisions } from '../physics/vehicle.js';
@@ -19,6 +20,11 @@ import { CrazyGamesSDK } from '../sdk/crazyGames.js';
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 const lerp = (a, b, t) => a + (b - a) * t;
 function damp(cur, target, lambda, dt) { return lerp(cur, target, 1 - Math.exp(-lambda * dt)); }
+function wrapAnglePi(a) {
+  while (a > Math.PI) a -= Math.PI * 2;
+  while (a < -Math.PI) a += Math.PI * 2;
+  return a;
+}
 function lerpAngle(a, b, t) {
   let d = (b - a) % (Math.PI * 2);
   if (d > Math.PI) d -= Math.PI * 2;
@@ -41,6 +47,8 @@ export class Game {
     this.cameraMode = 0; // 0 chase, 1 far, 2 cockpit
     this.playerAeroDesired = false;
     this.playerPitRequested = false;
+    this._pitAuto = 'off'; // off | approach | in | out (pit autopilot)
+    this._autoAim = {};
     this._accumulator = 0;
     this._lastTs = 0;
     this._menuAngle = 0;
@@ -80,14 +88,28 @@ export class Game {
     });
     this.input.on('reset', () => {
       if (this.state === 'racing' && this.player.pitState !== 'servicing') {
+        this._pitAuto = 'off';
+        this.playerPitRequested = false;
         this.player.resetToTrack();
         if (this.hud) this.hud.showMessage('CAR RESET TO TRACK', 1400);
       }
     });
     this.input.on('pitRequest', () => {
       if (this.state !== 'racing') return;
+      if (this._pitAuto === 'approach') { // still on circuit: allow cancel
+        this._pitAuto = 'off';
+        this.playerPitRequested = false;
+        if (this.hud) this.hud.showMessage('PIT AUTOPILOT CANCELLED', 1800);
+        return;
+      }
+      if (this._pitAuto !== 'off') {
+        if (this.hud) this.hud.showMessage('AUTOPILOT ACTIVE — IT WILL EXIT SAFELY', 1800);
+        return;
+      }
       this.playerPitRequested = !this.playerPitRequested;
-      if (this.hud) this.hud.showMessage(this.playerPitRequested ? 'PIT REQUESTED — ENTER AFTER FINAL CORNER' : 'PIT REQUEST CANCELLED', 2200);
+      if (this.hud) this.hud.showMessage(this.playerPitRequested
+        ? `PIT REQUESTED — AUTOPILOT TAKES OVER AT PIT ENTRY → YOUR GARAGE (BOX ${this.player.pitBoxIndex + 1})`
+        : 'PIT REQUEST CANCELLED', 2600);
     });
     this.input.on('cycleTyre', () => {
       if (!this.player) return;
@@ -112,6 +134,11 @@ export class Game {
     this.container.appendChild(this.renderer.domElement);
 
     this.scene = new THREE.Scene();
+    try {
+      const pmrem = new THREE.PMREMGenerator(this.renderer);
+      this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+      this.scene.environmentIntensity = 0.5;
+    } catch (e) { /* reflections optional — game continues without them */ }
     this.camera = new THREE.PerspectiveCamera(62, this.container.clientWidth / Math.max(this.container.clientHeight, 1), 0.1, 6000);
     this.camera.position.copy(this._camPos);
 
@@ -143,7 +170,7 @@ export class Game {
   _createCars() {
     this.player = new Vehicle(this.track, { name: PLAYER_PROFILE.name, isPlayer: true, tyre: this.raceConfig.tyre });
     this.player.colorCss = css(PLAYER_PROFILE.color);
-    this.player.visual = buildCar(PLAYER_PROFILE.color, PLAYER_PROFILE.accent);
+    this.player.visual = buildCar(PLAYER_PROFILE.color, PLAYER_PROFILE.accent, PLAYER_PROFILE.number);
     this.scene.add(this.player.visual);
 
     this.aiCars = [];
@@ -151,11 +178,19 @@ export class Game {
     for (const p of AI_DRIVERS) {
       const v = new Vehicle(this.track, { name: p.name, tyre: p.tyre });
       v.colorCss = css(p.color);
-      v.visual = buildCar(p.color, p.accent);
+      v.visual = buildCar(p.color, p.accent, p.number);
       this.scene.add(v.visual);
       this.aiCars.push(v);
       this.aiDrivers.push(new AIDriver(v, p, this.track));
     }
+    // every driver gets their OWN garage/pit box
+    this.player.pitBoxIndex = CONFIG.pit.playerBoxIndex;
+    this.player.pitBoxS = this.track.pit.boxes[this.player.pitBoxIndex].s;
+    const spareBoxes = this.track.pit.boxes.map((b) => b.index).filter((i) => i !== this.player.pitBoxIndex);
+    this.aiCars.forEach((car, k) => {
+      car.pitBoxIndex = spareBoxes[k];
+      car.pitBoxS = this.track.pit.boxes[car.pitBoxIndex].s;
+    });
     this.allCars = [this.player, ...this.aiCars];
     this._driverOf = new Map(this.aiDrivers.map((d) => [d.vehicle, d]));
   }
@@ -226,6 +261,8 @@ export class Game {
     this.aiDrivers.forEach((d) => d.reset());
     this.playerAeroDesired = false;
     this.playerPitRequested = false;
+    this._pitAuto = 'off'; // off | approach | in | out (pit autopilot)
+    this._autoAim = {};
   }
 
   _snapAllVisuals() {
@@ -339,8 +376,7 @@ export class Game {
     for (const car of this.allCars) {
       let inp;
       if (car.isPlayer) {
-        const raw = this.input.getState(this.settings.steeringSensitivity);
-        inp = { ...raw, aeroDesired: this.playerAeroDesired };
+        inp = this._playerInput(dt);
       } else {
         inp = this._driverOf.get(car).update(dt, ctx);
       }
@@ -352,11 +388,12 @@ export class Game {
     if (this._wasAeroActive && !this.player.aeroActive) this.playerAeroDesired = false;
     this._wasAeroActive = this.player.aeroActive;
 
-    // player pit service: stopped inside the box window → service starts
+    // player pit service (manual fallback): stopped near OWN garage → service.
+    // With autopilot engaged, _playerInput starts the service itself.
     const p = this.player;
-    if (!p.servicedThisVisit && p.pitState === 'lane' && p.inPitLane && p.stoppedTimer > 0.7) {
-      const toBox = Math.abs(deltaS(p.s, this.track.pit.boxS, this.track.length));
-      if (toBox < 90) { // generous box window along the yellow pit boxes
+    if (this._pitAuto === 'off' && !p.servicedThisVisit && p.pitState === 'lane' && p.inPitLane && p.stoppedTimer > 0.7) {
+      const toBox = Math.abs(deltaS(p.s, p.pitBoxS ?? this.track.pit.boxS, this.track.length));
+      if (toBox < 30) {
         p.startPitService();
         this.playerPitRequested = false;
         this.hud.showMessage('PIT STOP — FRESH TYRES' + (this.raceConfig.damage && p.damageLevel > 0 ? ' + REPAIRS' : ''), 2200);
@@ -431,16 +468,118 @@ export class Game {
     }
   }
 
+  /**
+   * Player input with pit autopilot. When a stop is requested, the car
+   * drives itself from pit entry to the player's OWN garage, stops exactly,
+   * waits for service, then exits under the limiter and hands control back.
+   * Mirrors the proven AI pit logic so behaviour is consistent.
+   */
+  _playerInput(dt) {
+    const p = this.player;
+    const track = this.track;
+    const raw = this.input.getState(this.settings.steeringSensitivity);
+    const manual = { ...raw, aeroDesired: this.playerAeroDesired };
+    if (p.pitState === 'servicing') return { steer: 0, throttle: 0, brake: 0, aeroDesired: false };
+
+    const toEntry = deltaS(p.s, track.pit.entryS, track.length);
+    const sinceEntry = deltaS(track.pit.entryS, p.s, track.length);
+    const inRange = track.inPitRange(p.s);
+    if (this._pitAuto === 'off') {
+      const canEngageInLane = p.inPitLane || (inRange && sinceEntry >= 0 && sinceEntry < 55);
+      if (this.playerPitRequested && (canEngageInLane || (toEntry > 0 && toEntry < 210))) {
+        this._pitAuto = canEngageInLane ? 'in' : 'approach';
+        this.playerAeroDesired = false;
+        this.hud.showMessage('🤖 PIT AUTOPILOT ENGAGED — HANDS OFF!', 2600);
+      } else {
+        return manual;
+      }
+    }
+
+    const speed = Math.abs(p.u);
+    const lookahead = clamp(9 + speed * 0.52, 11, 46);
+    const myBox = p.pitBoxS ?? track.pit.boxS;
+    const toBox = deltaS(p.s, myBox, track.length);
+    const pastEntry = toEntry <= 0 || p.inPitLane || inRange;
+    if (this._pitAuto === 'approach' && pastEntry) this._pitAuto = 'in';
+    if (this._pitAuto === 'in' && p.servicedThisVisit) this._pitAuto = 'out';
+
+    // If the divider wall has begun and the car is still on the circuit side,
+    // entry is no longer physically possible. Abort cleanly and keep the
+    // request ready for the next lap instead of scraping the wall/stopping.
+    if (this._pitAuto === 'in' && !p.servicedThisVisit && !p.inPitLane && track.inPitWallRange(p.s)) {
+      const pitSide = Math.sign(track.pit.lat - track.pit.wallLat);
+      const carSide = Math.sign(p.lat - track.pit.wallLat);
+      if (carSide !== pitSide) {
+        this._pitAuto = 'off';
+        this.hud.showMessage('PIT ENTRY MISSED — AUTOPILOT WILL TRY NEXT LAP', 2600);
+        return manual;
+      }
+    }
+
+    let aimLat, targetSpeed, aimDist = Math.min(lookahead, 22);
+    if (this._pitAuto === 'approach') {
+      const blend = clamp(1 - Math.max(toEntry, 0) / 150, 0, 1);
+      const base = getPointAt(track, p.s + lookahead, 0, this._autoAim);
+      aimLat = base.lineLat + (track.pit.lat - base.lineLat) * blend;
+      const raceSpeed = Math.min(track.samples.targetSpeed[p.sampleIdx], base.targetSpeed + 4) * 0.97;
+      targetSpeed = Math.min(raceSpeed, CONFIG.pit.speedLimitMS + (1 - blend * blend) * 55);
+      aimDist = lookahead;
+    } else if (this._pitAuto === 'in') {
+      aimLat = track.pit.lat;
+      targetSpeed = CONFIG.pit.speedLimitMS - 1;
+      if (!p.servicedThisVisit && toBox < 42 && toBox > -8) {
+        targetSpeed = clamp(Math.max(toBox, 0) * 0.55, 0, CONFIG.pit.speedLimitMS);
+        if (Math.abs(toBox) < 4.5 && speed < 2.4) {
+          p.startPitService();
+          this.playerPitRequested = false;
+          this.hud.showMessage(`PIT STOP — YOUR GARAGE CREW AT WORK${this.raceConfig.damage && p.damageLevel > 0 ? ' (incl. repairs)' : ''}`, 2400);
+          return { steer: 0, throttle: 0, brake: 1, aeroDesired: false };
+        }
+      } else if (!p.servicedThisVisit && toBox <= -8) {
+        targetSpeed = 0; // failsafe: slightly past the box — stop here, crew services anyway
+        if (speed < 1 && p.inPitLane) {
+          p.startPitService();
+          this.playerPitRequested = false;
+          return { steer: 0, throttle: 0, brake: 1, aeroDesired: false };
+        }
+      }
+    } else { // out
+      const pastWallEnd = deltaS(p.s, track.pit.wallEndS, track.length) < 0;
+      aimLat = pastWallEnd ? Math.sign(track.pit.lat) * (track.roadHalfWidth - 1.6) : track.pit.lat;
+      targetSpeed = pastWallEnd ? Math.min(track.samples.targetSpeed[p.sampleIdx], 42) : CONFIG.pit.speedLimitMS;
+      const pastExit = deltaS(track.pit.exitS, p.s, track.length);
+      if (pastExit > 0 && pastExit < 250 && Math.abs(p.lat) < track.roadHalfWidth) {
+        this._pitAuto = 'off';
+        this.hud.showMessage('PIT EXIT — YOU HAVE CONTROL. GO!', 2400);
+        return manual;
+      }
+    }
+
+    const aim = getPointAt(track, p.s + aimDist, aimLat, this._autoAim);
+    const err = wrapAnglePi(Math.atan2(aim.x - p.x, aim.z - p.z) - p.heading);
+    const steer = clamp(err * 2.1 - p.yawRate * 0.04, -1, 1);
+    let throttle = 0, brake = 0;
+    const u = p.u;
+    if (u < targetSpeed - 0.4) throttle = clamp((targetSpeed - u) / 6, 0.25, 1);
+    else if (u > targetSpeed + 0.6) brake = clamp((u - targetSpeed) / 7, 0.15, 1);
+    else throttle = 0.55;
+    if (Math.abs(u) < 1 && targetSpeed > 3) { throttle = 1; brake = 0; }
+    return { steer, throttle, brake, aeroDesired: false };
+  }
+
   _pitGuidance() {
     const p = this.player;
-    if (p.pitState === 'servicing') return `🔧 SERVICING… ${Math.max(p.pitTimer, 0).toFixed(1)}s`;
+    if (p.pitState === 'servicing') return `🔧 SERVICING AT YOUR GARAGE… ${Math.max(p.pitTimer, 0).toFixed(1)}s`;
+    if (this._pitAuto === 'approach') return '🤖 PIT AUTOPILOT — ENTERING THE PIT LANE';
+    if (this._pitAuto === 'in') return `🤖 AUTOPILOT — STOPPING AT YOUR GARAGE (BOX ${p.pitBoxIndex + 1})`;
+    if (this._pitAuto === 'out') return '🤖 AUTOPILOT — EXITING… CONTROL RETURNS AT PIT EXIT';
     if (p.inPitLane) {
-      const toBox = deltaS(p.s, this.track.pit.boxS, this.track.length);
+      const toBox = deltaS(p.s, p.pitBoxS ?? this.track.pit.boxS, this.track.length);
       return toBox > 0 && toBox < 400
-        ? `PIT LANE — STOP AT THE YELLOW BOX (${Math.round(toBox)} m)`
+        ? `PIT LANE — STOP AT YOUR ORANGE BOX ${p.pitBoxIndex + 1} (${Math.round(toBox)} m) — or press P for autopilot`
         : 'PIT LANE — LIMITER ON (80 KM/H)';
     }
-    if (this.playerPitRequested) return 'PIT REQUESTED — ENTER LANE AFTER FINAL CORNER [P to cancel]';
+    if (this.playerPitRequested) return 'PIT REQUESTED — AUTOPILOT ENGAGES AT PIT ENTRY [P to cancel]';
     if (p.tyreWear < 22) return 'TYRES VERY WORN — CONSIDER PITTING [P]';
     return '';
   }
@@ -497,7 +636,8 @@ export class Game {
       const x = lerp(car.prevX, car.x, alpha);
       const z = lerp(car.prevZ, car.z, alpha);
       car.visual.position.set(x, 0, z);
-      car.visual.rotation.set(0, lerpAngle(car.prevHeading, car.heading, alpha), 0);
+      const slipYaw = clamp(0.55 * Math.atan2(car.w, Math.max(Math.abs(car.u), 4)), -0.32, 0.32);
+      car.visual.rotation.set(0, lerpAngle(car.prevHeading, car.heading, alpha) + slipYaw, 0);
       updateCarVisual(car.visual, car, dt);
       // dust off-track / smoke with heavy damage
       if (simActive && car.offTrack && Math.abs(car.u) > 9 && Math.random() < 0.5) {

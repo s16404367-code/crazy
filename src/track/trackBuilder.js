@@ -5,7 +5,7 @@
 
 import * as THREE from 'three';
 import { getPointAt, deltaS } from './trackData.js';
-import { QUALITY_PRESETS } from '../config/config.js';
+import { QUALITY_PRESETS, CONFIG } from '../config/config.js';
 
 // ---------- procedural textures ----------
 function canvasTex(w, h, draw, repeat = true) {
@@ -25,12 +25,14 @@ function speckle(ctx, w, h, colors, count, size = 2) {
   }
 }
 const asphaltTex = () => canvasTex(256, 256, (ctx, w, h) => {
-  ctx.fillStyle = '#34373e'; ctx.fillRect(0, 0, w, h);
-  speckle(ctx, w, h, ['#2c2f36', '#3d4048', '#2a2d33', '#454954'], 2600);
-  ctx.fillStyle = 'rgba(255,255,255,0.85)';
-  ctx.fillRect(5, 0, 5, h); ctx.fillRect(w - 10, 0, 5, h); // edge lines (u = across)
-  ctx.fillStyle = 'rgba(0,0,0,0.10)';
-  ctx.fillRect(w * 0.3, 0, w * 0.12, h); ctx.fillRect(w * 0.58, 0, w * 0.12, h); // tyre darkening
+  ctx.fillStyle = '#26282e'; ctx.fillRect(0, 0, w, h);
+  speckle(ctx, w, h, ['#202228', '#31343c', '#1c1e24', '#3a3e48'], 3000);
+  ctx.fillStyle = 'rgba(0,0,0,0.16)';
+  for (let i = 0; i < 7; i++) ctx.fillRect(Math.random() * w, Math.random() * h, 26 + Math.random() * 40, 12 + Math.random() * 22); // patched tarmac
+  ctx.fillStyle = 'rgba(0,0,0,0.20)';
+  ctx.fillRect(w * 0.28, 0, w * 0.13, h); ctx.fillRect(w * 0.59, 0, w * 0.13, h); // heavy tyre lines
+  ctx.fillStyle = 'rgba(255,255,255,0.95)';
+  ctx.fillRect(3, 0, 7, h); ctx.fillRect(w - 10, 0, 7, h); // bold edge lines (u = across)
 });
 const pitAsphaltTex = () => canvasTex(256, 256, (ctx, w, h) => {
   ctx.fillStyle = '#3c3f46'; ctx.fillRect(0, 0, w, h);
@@ -42,8 +44,14 @@ const kerbTex = () => canvasTex(64, 128, (ctx, w, h) => {
   ctx.fillStyle = '#e8e8e8'; ctx.fillRect(0, h / 2, w, h / 2);
 });
 const grassTex = () => canvasTex(256, 256, (ctx, w, h) => {
-  ctx.fillStyle = '#2c4426'; ctx.fillRect(0, 0, w, h);
-  speckle(ctx, w, h, ['#243a20', '#35522c', '#2e4a2a', '#3d5c33'], 3200);
+  ctx.fillStyle = '#2e4a28'; ctx.fillRect(0, 0, w, h);
+  for (let i = 0; i < 26; i++) { // mowing patches — less flat grass
+    ctx.fillStyle = i % 2 ? 'rgba(255,255,230,0.045)' : 'rgba(0,0,0,0.07)';
+    ctx.beginPath();
+    ctx.ellipse(Math.random() * w, Math.random() * h, 18 + Math.random() * 42, 10 + Math.random() * 24, Math.random() * 3, 0, 7);
+    ctx.fill();
+  }
+  speckle(ctx, w, h, ['#243a20', '#3a5c30', '#2e4a2a', '#456b38'], 3200);
 });
 const gravelTex = () => canvasTex(256, 256, (ctx, w, h) => {
   ctx.fillStyle = '#6d6455'; ctx.fillRect(0, 0, w, h);
@@ -98,7 +106,7 @@ function buildRibbon(track, latA, latB, y, material, opts = {}) {
     void v;
     if (prevOk && prevVi >= 0) {
       const a = prevVi, b = prevVi + 1, c = vi, d = vi + 1;
-      idx.push(a, b, c, b, d, c);
+      idx.push(a, c, b, b, c, d); // winding: front face UP (was downward → road invisible, grass showed through)
     }
     prevVi = vi; prevOk = true; vi += 2;
   }
@@ -160,6 +168,23 @@ export function buildEnvironment(scene, qualityKey) {
   rain.frustumCulled = false;
   scene.add(rain);
 
+  // soft dusk clouds — a handful of big gradient sprites (near-zero cost)
+  const cloudTex = canvasTex(256, 128, (ctx, w, h) => {
+    const grad = ctx.createRadialGradient(w / 2, h / 2, 8, w / 2, h / 2, w / 2);
+    grad.addColorStop(0, 'rgba(255,210,180,0.55)');
+    grad.addColorStop(0.55, 'rgba(230,160,150,0.25)');
+    grad.addColorStop(1, 'rgba(230,160,150,0)');
+    ctx.fillStyle = grad; ctx.fillRect(0, 0, w, h);
+  }, false);
+  const cloudRnd = mulberry32(4242);
+  for (let i = 0; i < 13; i++) {
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: cloudTex, transparent: true, opacity: 0.5, depthWrite: false, fog: false }));
+    const ang = cloudRnd() * Math.PI * 2, rad = 1500 + cloudRnd() * 1600;
+    sp.position.set(Math.cos(ang) * rad, 300 + cloudRnd() * 260, Math.sin(ang) * rad);
+    sp.scale.set(900 + cloudRnd() * 900, 200 + cloudRnd() * 160, 1);
+    scene.add(sp);
+  }
+
   return { sky, skyMat, hemi, sun, rain, rainPos, sunDir: new THREE.Vector3(-0.55, 0.38, -0.35).normalize() };
 }
 
@@ -198,10 +223,10 @@ export function buildTrack(scene, track, qualityKey) {
   const R = track.roadHalfWidth, K = track.kerbWidth, RO = track.runoffWidth;
   const smp = track.samples;
 
-  const asphalt = new THREE.MeshStandardMaterial({ map: asphaltTex(), roughness: 0.94, metalness: 0 });
-  const pitAsphalt = new THREE.MeshStandardMaterial({ map: pitAsphaltTex(), roughness: 0.94 });
-  const kerbMat = new THREE.MeshStandardMaterial({ map: kerbTex(), roughness: 0.8 });
-  const gravel = new THREE.MeshStandardMaterial({ map: gravelTex(), roughness: 1 });
+  const asphalt = new THREE.MeshStandardMaterial({ map: asphaltTex(), roughness: 0.94, metalness: 0, side: THREE.DoubleSide });
+  const pitAsphalt = new THREE.MeshStandardMaterial({ map: pitAsphaltTex(), roughness: 0.94, side: THREE.DoubleSide });
+  const kerbMat = new THREE.MeshStandardMaterial({ map: kerbTex(), roughness: 0.8, side: THREE.DoubleSide });
+  const gravel = new THREE.MeshStandardMaterial({ map: gravelTex(), roughness: 1, side: THREE.DoubleSide });
 
   // ground
   const grassT = grassTex(); grassT.repeat.set(90, 90);
@@ -239,15 +264,23 @@ export function buildTrack(scene, track, qualityKey) {
   const startLine = flatAt(new THREE.Mesh(new THREE.PlaneGeometry(R * 2, 2.4),
     new THREE.MeshStandardMaterial({ map: checkerTex(), roughness: 0.8 })), 0, 0, 0.045);
   g.add(startLine);
+  const sectorLineMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.55 });
+  for (const secS of [track.length / 3, (2 * track.length) / 3]) {
+    g.add(flatAt(new THREE.Mesh(new THREE.PlaneGeometry(R * 2, 0.9), sectorLineMat), secS, 0, 0.045));
+  }
+  const pitLineMat = new THREE.MeshBasicMaterial({ color: 0xffe98a, transparent: true, opacity: 0.9 });
+  g.add(flatAt(new THREE.Mesh(new THREE.PlaneGeometry(8, 1.6), pitLineMat), pit.entryS, pit.lat, 0.046)); // pit entry line
+  g.add(flatAt(new THREE.Mesh(new THREE.PlaneGeometry(8, 1.6), pitLineMat), pit.exitS, pit.lat, 0.046)); // pit exit line
   const slotMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5 });
   for (const slot of track.gridSlots) {
     g.add(flatAt(new THREE.Mesh(new THREE.PlaneGeometry(2.5, 4.6), slotMat), slot.s, slot.lat, 0.04));
   }
   // pit boxes
-  const pitBoxMat = new THREE.MeshBasicMaterial({ color: 0xffe98a, transparent: true, opacity: 0.75 });
-  for (let k = -2; k <= 3; k++) {
-    g.add(flatAt(new THREE.Mesh(new THREE.PlaneGeometry(3.4, 6), pitBoxMat),
-      pit.boxS + k * 21, pit.lat + Math.sign(pit.lat) * 1.6, 0.042));
+  const pitBoxMat = new THREE.MeshBasicMaterial({ color: 0xffe98a, transparent: true, opacity: 0.7 });
+  const myBoxMat = new THREE.MeshBasicMaterial({ color: 0xff7a1a, transparent: true, opacity: 0.85 });
+  for (const b of pit.boxes) {
+    g.add(flatAt(new THREE.Mesh(new THREE.PlaneGeometry(4.4, 7),
+      b.index === CONFIG.pit.playerBoxIndex ? myBoxMat : pitBoxMat), b.s, pit.lat, 0.042));
   }
 
   // barriers (instanced, alternating colours via instance colour)
@@ -274,6 +307,37 @@ export function buildTrack(scene, track, qualityKey) {
   }
   barriers.count = bi;
   g.add(barriers);
+
+  // pit divider wall (visual matches the physics wall in vehicle.js)
+  {
+    const wallIdx = [];
+    for (let i = 0; i < track.count; i += 3) if (track.inPitWallRange(smp.s[i])) wallIdx.push(i);
+    const wallGeo = new THREE.BoxGeometry(0.35, 0.55, track.ds * 3 + 0.25);
+    const wall = new THREE.InstancedMesh(wallGeo,
+      new THREE.MeshStandardMaterial({ roughness: 0.75, metalness: 0.05 }), wallIdx.length);
+    wallIdx.forEach((i, k) => {
+      qt.setFromAxisAngle(up, smp.phi[i]);
+      m4.compose(new THREE.Vector3(
+        smp.x[i] + smp.nx[i] * track.pit.wallLat, 0.28,
+        smp.z[i] + smp.nz[i] * track.pit.wallLat), qt, new THREE.Vector3(1, 1, 1));
+      wall.setMatrixAt(k, m4);
+      wall.setColorAt(k, col.set(k % 5 === 4 ? 0xd8b93a : 0xc9ced8)); // yellow every 5th panel
+    });
+    wall.count = wallIdx.length;
+    g.add(wall);
+    // orange cones marking the entry/exit gaps in the wall
+    const coneSpots = [];
+    for (const d of [-36, -22, -8]) coneSpots.push(pit.entryS + d);
+    for (const d of [8, 22, 36]) coneSpots.push(pit.exitS + d);
+    const cones = new THREE.InstancedMesh(new THREE.ConeGeometry(0.34, 0.8, 8),
+      new THREE.MeshStandardMaterial({ color: 0xff6a1a, roughness: 0.7 }), coneSpots.length);
+    coneSpots.forEach((cs, k) => {
+      getPointAt(track, cs, track.pit.wallLat, tmpP);
+      m4.compose(new THREE.Vector3(tmpP.x, 0.4, tmpP.z), new THREE.Quaternion(), new THREE.Vector3(1, 1, 1));
+      cones.setMatrixAt(k, m4);
+    });
+    g.add(cones);
+  }
 
   // tyre stacks at key corner outsides
   const stackSpots = [];
@@ -384,8 +448,8 @@ export function buildTrack(scene, track, qualityKey) {
   const garageMat = new THREE.MeshStandardMaterial({ color: 0x3a3f4a, roughness: 0.8 });
   const doorMats = [0x2050d8, 0xd8232f, 0x10a8a0, 0xf2c230, 0x8a3fd1, 0x38b83e].map(
     (c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.6 }));
-  for (let k = 0; k < 6; k++) {
-    getPointAt(track, pit.boxS - 55 + k * 22, pit.lat + Math.sign(pit.lat) * 9.5, tmpP);
+  for (let k = 0; k < pit.boxes.length; k++) {
+    getPointAt(track, pit.boxes[k].s, pit.lat + Math.sign(pit.lat) * 9.5, tmpP);
     const gar = new THREE.Group();
     gar.position.set(tmpP.x, 0, tmpP.z);
     gar.rotation.y = tmpP.phi;
@@ -393,10 +457,20 @@ export function buildTrack(scene, track, qualityKey) {
     shell.geometry.rotateY(Math.PI / 2);
     shell.position.y = 2.75; shell.castShadow = q.shadows;
     gar.add(shell);
-    const door = new THREE.Mesh(new THREE.BoxGeometry(7.5, 3.6, 0.2), doorMats[k]);
+    const isPlayerBox = k === CONFIG.pit.playerBoxIndex;
+    const door = new THREE.Mesh(new THREE.BoxGeometry(7.5, 3.6, 0.2),
+      isPlayerBox ? new THREE.MeshStandardMaterial({ color: 0xff7a1a, roughness: 0.55 }) : doorMats[k % doorMats.length]);
     door.geometry.rotateY(Math.PI / 2);
     door.position.set(-Math.sign(pit.lat) * 3.6, 1.8, 0); // door faces the pit lane / track
     gar.add(door);
+    const label = new THREE.Mesh(new THREE.PlaneGeometry(9.5, 1.5),
+      new THREE.MeshStandardMaterial({
+        map: boardTex(isPlayerBox ? `YOUR GARAGE` : `BOX ${k + 1}`, isPlayerBox ? '#f06a08' : '#16213e', '#ffffff'),
+        roughness: 0.7
+      }));
+    label.position.set(-Math.sign(pit.lat) * 3.85, 4.9, 0);
+    label.rotation.y = -Math.sign(pit.lat) * Math.PI / 2;
+    gar.add(label);
     g.add(gar);
   }
 

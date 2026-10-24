@@ -200,7 +200,15 @@ export function getTrack() {
     exitS: sAtRaw([-265, 302]),
     limitMS: CONFIG.pit.speedLimitMS
   };
+  // nine individual garages/boxes (one per driver), 24 m apart around boxS
+  pit.boxes = [];
+  for (let i = 0; i < 9; i++) pit.boxes.push({ index: i, s: wrapS(pit.boxS + (i - 4) * 24, L) });
+  // divider wall between circuit and pit lane, with entry/exit gaps
+  pit.wallLat = pitSideSign * 7.9;
+  pit.wallStartS = wrapS(pit.entryS + 60, L);
+  pit.wallEndS = wrapS(pit.exitS - 40, L);
   const inPitRange = (s) => deltaS(pit.entryS, s, L) >= 0 && deltaS(s, pit.exitS, L) >= 0;
+  const inPitWallRange = (s) => deltaS(pit.wallStartS, s, L) >= 0 && deltaS(s, pit.wallEndS, L) >= 0;
 
   // --- per-sample barrier distances (extended on pit side + corner outsides)
   const barrierL = new Float64Array(n), barrierR = new Float64Array(n);
@@ -241,6 +249,7 @@ export function getTrack() {
     aeroZones,
     pit,
     inPitRange,
+    inPitWallRange,
     gridSlots,
     controlPoints: points,
     rawPoints: RAW_POINTS,

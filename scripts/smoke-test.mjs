@@ -23,6 +23,16 @@ const check = (cond, msg) => { console.log(`${cond ? 'PASS' : 'FAIL'}  ${msg}`);
 check(Math.abs(track.length - 3500) < 120, `lap length ≈3.5 km (got ${track.length.toFixed(0)} m)`);
 check(minV < 24, `hairpin is genuinely slow (target ${(minV * 3.6).toFixed(0)} km/h < 86 km/h)`);
 check(track.aeroZones.length === 2, 'two active-aero zones defined');
+// ribbon winding sanity: indexed (a,c,b) the road's face normal must point UP
+{
+  const smp = track.samples, i = 100, j = 102;
+  const pt = (k, lat) => [smp.x[k] + smp.nx[k] * lat, 0, smp.z[k] + smp.nz[k] * lat];
+  const a = pt(i, -7), b = pt(i, 7), c = pt(j, -7);
+  const u = [c[0] - a[0], 0, c[2] - a[2]], w = [b[0] - a[0], 0, b[2] - a[2]];
+  const ny = u[2] * w[0] - u[0] * w[2]; // y of u × w for triangle (a,c,b)
+  check(ny > 0, `road ribbon winding faces UP (normal y=${ny.toFixed(1)} > 0) — road visible, not grass`);
+}
+check(track.pit.boxes.length === 9 && track.inPitWallRange(track.pit.boxS), '9 individual pit boxes + divider wall range defined');
 
 // ---- build a 9-car field, all AI-driven (player car is AI-driven here) ----
 const profiles = [{ name: 'YOU', skill: 0.985, aggression: 0.6, tyre: 'soft' }, ...AI_DRIVERS];
@@ -30,6 +40,8 @@ const cars = [];
 const drivers = [];
 profiles.forEach((p, i) => {
   const v = new Vehicle(track, { name: p.name, isPlayer: i === 0, tyre: p.tyre });
+  v.pitBoxIndex = i;
+  v.pitBoxS = track.pit.boxes[i].s;
   cars.push(v);
   drivers.push(new AIDriver(v, p, track));
 });
