@@ -1,0 +1,20 @@
+{
+  "name": "dusk-apex",
+  "version": "0.9.0",
+  "private": true,
+  "type": "module",
+  "description": "DUSK APEX - Single-Seater Racing. Original lightweight 3D browser racing game.",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 5173",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0 --port 4173",
+    "smoke": "node scripts/smoke-test.mjs"
+  },
+  "dependencies": {
+    "three": "^0.170.0"
+  },
+  "devDependencies": {
+    "vite": "^5.4.11",
+    "vite-plugin-singlefile": "^2.2.0"
+  }
+}
