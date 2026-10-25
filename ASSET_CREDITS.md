@@ -6,7 +6,7 @@ audible in the game is generated procedurally by the project's own code:
 | Item | Source | Licence |
 |---|---|---|
 | Car model | Built in code from Three.js primitives (`src/render/carBuilder.js`) | Original to this project |
-| Circuit & scenery | Built in code from original spline data (`src/track/`) | Original to this project |
+| Circuit & scenery | Built in code from original spline data (`src/track/`); outline exported to `docs/original-circuit.svg` | Original to this project |
 | Textures (asphalt, kerbs, grass, boards…) | Procedural canvas painting in `src/track/trackBuilder.js` | Original to this project |
 | Engine/SFX/music | Synthesised live with WebAudio (`src/audio/audio.js`) — no audio files | Original to this project |
 | Fonts | System font stack only (no downloaded fonts) | n/a |
@@ -23,3 +23,6 @@ audible in the game is generated procedurally by the project's own code:
 No F1 logos, team names, real driver likenesses, sponsor logos, commercial
 car models or copied real-world circuit geometry are used anywhere
 (Master Prompt §10). The circuit layout is an original design.
+
+The v0.11 Aurelia Park outline was authored for this project and exported
+from its own centreline data; it is not traced from a real-world circuit SVG.

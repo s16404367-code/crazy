@@ -19,7 +19,8 @@ export class RaceManager {
     this.stats = new Map();
     this.standings = [];
     this.fastestLap = null; // {car, time}
-    this.yellowSector = -1;
+    this.yellowSector = -1; // first yellow sector (legacy consumers)
+    this.yellowSectors = []; // all sectors with a stopped/stricken car
     this.events = []; // consumed by Game for messages/audio
     this.playerFinishedAt = -1;
   }
@@ -31,6 +32,7 @@ export class RaceManager {
     this.raceTime = 0;
     this.fastestLap = null;
     this.yellowSector = -1;
+    this.yellowSectors = [];
     this.playerFinishedAt = -1;
     this.events.length = 0;
     this.stats.clear();
@@ -166,21 +168,27 @@ export class RaceManager {
   }
 
   _updateYellowFlag() {
-    let sector = -1;
-    if (this.raceTime > 6) {
+    const sectors = new Set();
+    if (this.state === 'racing' && this.raceTime > 6) {
       for (const car of this.cars) {
         const st = this.stats.get(car);
-        if (st.finished || car.pitState !== 'none') continue;
-        if (car.surface === 'road' && Math.abs(car.u) < 2.2 && car.stoppedTimer > 1.2) {
-          sector = this.sectorOf(car.totalDist);
-          break;
+        if (!st || st.finished || car.pitState !== 'none') continue;
+        // A car stopped on the racing surface OR stranded just off it both
+        // justify waved yellows. Pit-lane stops are handled by pit crews.
+        if (Math.abs(car.u) < 2.2 && car.stoppedTimer > 1.2) {
+          sectors.add(this.sectorOf(car.totalDist));
         }
       }
     }
-    if (sector !== this.yellowSector) {
-      this.yellowSector = sector;
-      this.events.push({ type: sector >= 0 ? 'yellow' : 'green', sector });
+    const next = [...sectors].sort((a, b) => a - b);
+    for (const sector of next) {
+      if (!this.yellowSectors.includes(sector)) this.events.push({ type: 'yellow', sector });
     }
+    for (const sector of this.yellowSectors) {
+      if (!next.includes(sector)) this.events.push({ type: 'green', sector });
+    }
+    this.yellowSectors = next;
+    this.yellowSector = next.length ? next[0] : -1;
   }
 
   positionOf(car) {

@@ -6,7 +6,7 @@ import { detectDefaultQuality } from '../config/config.js';
 const KEY = 'duskApex.settings.v1';
 
 export const DEFAULT_SETTINGS = {
-  steeringSensitivity: 1.0, // 0.6..1.5
+  steeringSensitivity: 1.1, // 0.6..1.8 (amount + lock speed)
   quality: 'medium', // replaced by auto-detect on first load
   damage: 'ON', // ON | OFF
   masterVolume: 0.8,

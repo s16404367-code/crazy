@@ -35,6 +35,7 @@ export class AIDriver {
     this.overtakeSide = 0;
     this.overtakeHoldT = 0;
     this.pitOutT = 0; // seconds of careful merging after a pit exit
+    this._pitAbort = false; // overshot own box: leave via fast lane, retry next lap
     this._aim = {};
     this._input = { steer: 0, throttle: 0, brake: 0, aeroDesired: false };
   }
@@ -44,7 +45,7 @@ export class AIDriver {
     this.pitRequested = false;
     this.latOffset = 0; this.latOffsetTarget = 0;
     this.speedCap = Infinity;
-    this.overtakeSide = 0; this.overtakeHoldT = 0; this.pitOutT = 0;
+    this.overtakeSide = 0; this.overtakeHoldT = 0; this.pitOutT = 0; this._pitAbort = false;
   }
 
   think(ctx) {
@@ -79,10 +80,10 @@ export class AIDriver {
     }
     if (this.pitRequested && this.mode === 'race') {
       const toEntry = deltaS(v.s, track.pit.entryS, L);
-      if (toEntry > 0 && toEntry < 260) this.mode = 'pit-in';
+      if (toEntry > 0 && toEntry < 260) { this.mode = 'pit-in'; this._pitAbort = false; }
     }
     if (this.mode === 'pit-in' && v.inPitLane) this.mode = 'pit';
-    if (this.mode === 'pit' && v.pitState === 'none') { this.mode = 'race'; this.pitRequested = false; this.pitOutT = 6; }
+    if (this.mode === 'pit' && v.pitState === 'none') { this.mode = 'race'; this.pitOutT = 6; if (v.servicedThisVisit || !this._pitAbort) this.pitRequested = false; this._pitAbort = false; }
     if (this.mode !== 'race') return; // pit steering handled in control()
 
     // orderly launch: hold the racing line for the first seconds
@@ -128,9 +129,10 @@ export class AIDriver {
     }
 
     // ---- yellow flag in my sector: back off ----
-    if (ctx.yellowSector >= 0) {
+    const yellowSectors = ctx.yellowSectors || (ctx.yellowSector >= 0 ? [ctx.yellowSector] : []);
+    if (yellowSectors.length) {
       const mySector = Math.floor((((v.totalDist % L) + L) % L) / track.sectorLength);
-      if (mySector === ctx.yellowSector) this.speedCap = Math.min(this.speedCap, 26);
+      if (yellowSectors.includes(mySector)) this.speedCap = Math.min(this.speedCap, 26);
     }
 
     // ---- recovery assist: long-stuck AI rejoin at same progress ----
@@ -166,12 +168,12 @@ export class AIDriver {
       //  B) inside the lane: obey the limit and stop on the box (with a
       //     generous window + retry-next-lap if the box is overshot).
       const toEntry = deltaS(v.s, track.pit.entryS, track.length);
-      const toBox = deltaS(v.s, track.pit.boxS, track.length);
+      const toBox = deltaS(v.s, v.pitBoxS ?? track.pit.boxS, track.length); // this driver's own garage
       const pastEntry = toEntry <= 0 || v.inPitLane;
       const aimBase = getPointAt(track, v.s + lookahead, 0, this._aim);
       if (!pastEntry) {
         const blend = clamp(1 - Math.max(toEntry, 0) / 150, 0, 1);
-        aimLat = aimBase.lineLat + (track.pit.lat - aimBase.lineLat) * blend;
+        aimLat = aimBase.lineLat + ((track.pit.fastLat ?? track.pit.lat) - aimBase.lineLat) * blend;
         const raceSpeed = Math.min(track.samples.targetSpeed[v.sampleIdx], aimBase.targetSpeed + 4) * this.paceFactor;
         const approachCap = CONFIG.pit.speedLimitMS + (1 - blend * blend) * 55;
         targetSpeed = Math.min(raceSpeed, approachCap);
@@ -181,13 +183,38 @@ export class AIDriver {
         return inp;
       }
       this.mode = 'pit';
-      aimLat = track.pit.lat;
+      const fastLat = track.pit.fastLat ?? track.pit.lat;
+      const boxLat = track.pit.boxLat ?? track.pit.lat;
       targetSpeed = CONFIG.pit.speedLimitMS - 1;
-      if (v.inPitLane && !v.servicedThisVisit && toBox < 40 && toBox > -8) {
-        targetSpeed = clamp(Math.max(toBox, 0) * 0.55, 0, CONFIG.pit.speedLimitMS);
-        if (!v.servicedThisVisit && Math.abs(toBox) < 5.5 && speed < 2.2) { v.startPitService(); return inp; }
-      } else if (!v.servicedThisVisit && toBox <= -8 && v.pitState === 'lane') {
-        this.mode = 'race'; // overshot the box WITHOUT service — stay out, retry next lap
+      if (v.servicedThisVisit) {
+        // Pull away in the box lane, then blend into the fast lane over ~45 m.
+        const sinceBox = deltaS(v.pitBoxS ?? track.pit.boxS, v.s, track.length);
+        const merge = clamp((sinceBox > 0 ? sinceBox : 0) / 45, 0, 1);
+        aimLat = boxLat + (fastLat - boxLat) * merge;
+      } else if (this._pitAbort || (toBox <= -8 && v.pitState === 'lane')) {
+        this._pitAbort = true; // missed the box: leave in the fast lane, retry next lap
+        aimLat = fastLat;
+      } else {
+        // Through traffic stays in the FAST lane. Only in the last ~58 m does
+        // this car blend across into its own box lane, so a car being serviced
+        // no longer blocks every other car in the pit lane.
+        const boxBlend = clamp((58 - toBox) / 40, 0, 1);
+        aimLat = fastLat + (boxLat - fastLat) * boxBlend;
+        if (v.inPitLane && toBox < 42 && toBox > -8) {
+          targetSpeed = clamp(Math.max(toBox, 0) * 0.55, 0, CONFIG.pit.speedLimitMS);
+          if (Math.abs(toBox) < 5.5 && speed < 2.2 && Math.abs(v.lat - boxLat) < 3.2) {
+            v.startPitService(); return inp;
+          }
+          if (Math.abs(toBox) < 8 && Math.abs(v.lat - boxLat) >= 3.2) {
+            targetSpeed = Math.max(targetSpeed, 4); // still crossing to the box lane — keep creeping
+          }
+        }
+      }
+      // Same-lane queueing only: a serviced car in the box lane must NOT slow
+      // a car passing in the fast lane (lateral separation >2.3 m = clear).
+      if (this._ahead && this._aheadDelta > 0 && this._aheadDelta < 11 &&
+          this._ahead.pitState !== 'none' && Math.abs(this._ahead.lat - v.lat) < 2.3) {
+        targetSpeed = Math.min(targetSpeed, Math.max(Math.abs(this._ahead.u) - 0.3, 0));
       }
       const aim = getPointAt(track, v.s + Math.min(lookahead, 20), aimLat, this._aim);
       this._steerToward(aim, inp);

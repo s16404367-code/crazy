@@ -1,11 +1,11 @@
 // DUSK APEX — circuit & environment rendering, built entirely from the
 // shared centreline samples (one track definition, §18). All textures are
 // procedural canvas art: zero external assets, zero licensing risk, tiny
-// download. Dusk identity: warm low sun, deep-blue/orange sky, floodlights.
+// download. v0.11 switches the scene to clear daylight per owner feedback.
 
 import * as THREE from 'three';
 import { getPointAt, deltaS } from './trackData.js';
-import { QUALITY_PRESETS } from '../config/config.js';
+import { QUALITY_PRESETS, CONFIG } from '../config/config.js';
 
 // ---------- procedural textures ----------
 function canvasTex(w, h, draw, repeat = true) {
@@ -25,25 +25,33 @@ function speckle(ctx, w, h, colors, count, size = 2) {
   }
 }
 const asphaltTex = () => canvasTex(256, 256, (ctx, w, h) => {
-  ctx.fillStyle = '#34373e'; ctx.fillRect(0, 0, w, h);
-  speckle(ctx, w, h, ['#2c2f36', '#3d4048', '#2a2d33', '#454954'], 2600);
-  ctx.fillStyle = 'rgba(255,255,255,0.85)';
-  ctx.fillRect(5, 0, 5, h); ctx.fillRect(w - 10, 0, 5, h); // edge lines (u = across)
-  ctx.fillStyle = 'rgba(0,0,0,0.10)';
-  ctx.fillRect(w * 0.3, 0, w * 0.12, h); ctx.fillRect(w * 0.58, 0, w * 0.12, h); // tyre darkening
+  ctx.fillStyle = '#30333a'; ctx.fillRect(0, 0, w, h);
+  speckle(ctx, w, h, ['#202228', '#31343c', '#1c1e24', '#3a3e48'], 3000);
+  ctx.fillStyle = 'rgba(0,0,0,0.16)';
+  for (let i = 0; i < 7; i++) ctx.fillRect(Math.random() * w, Math.random() * h, 26 + Math.random() * 40, 12 + Math.random() * 22); // patched tarmac
+  ctx.fillStyle = 'rgba(0,0,0,0.20)';
+  ctx.fillRect(w * 0.28, 0, w * 0.13, h); ctx.fillRect(w * 0.59, 0, w * 0.13, h); // heavy tyre lines
+  ctx.fillStyle = 'rgba(255,255,255,0.95)';
+  ctx.fillRect(3, 0, 7, h); ctx.fillRect(w - 10, 0, 7, h); // bold edge lines (u = across)
 });
 const pitAsphaltTex = () => canvasTex(256, 256, (ctx, w, h) => {
-  ctx.fillStyle = '#3c3f46'; ctx.fillRect(0, 0, w, h);
-  speckle(ctx, w, h, ['#33363d', '#464a52'], 2000);
-  ctx.fillStyle = 'rgba(255,255,255,0.9)'; ctx.fillRect(w / 2 - 2, 0, 4, h);
+  ctx.fillStyle = '#474a50'; ctx.fillRect(0, 0, w, h);
+  speckle(ctx, w, h, ['#3a3d44', '#555861', '#454951'], 2200);
+  ctx.fillStyle = 'rgba(0,0,0,0.18)'; ctx.fillRect(0, 0, w, 3); // concrete expansion joint
 });
 const kerbTex = () => canvasTex(64, 128, (ctx, w, h) => {
   ctx.fillStyle = '#d8232f'; ctx.fillRect(0, 0, w, h / 2);
   ctx.fillStyle = '#e8e8e8'; ctx.fillRect(0, h / 2, w, h / 2);
 });
 const grassTex = () => canvasTex(256, 256, (ctx, w, h) => {
-  ctx.fillStyle = '#2c4426'; ctx.fillRect(0, 0, w, h);
-  speckle(ctx, w, h, ['#243a20', '#35522c', '#2e4a2a', '#3d5c33'], 3200);
+  ctx.fillStyle = '#397033'; ctx.fillRect(0, 0, w, h);
+  for (let i = 0; i < 26; i++) { // mowing patches — less flat grass
+    ctx.fillStyle = i % 2 ? 'rgba(255,255,230,0.045)' : 'rgba(0,0,0,0.07)';
+    ctx.beginPath();
+    ctx.ellipse(Math.random() * w, Math.random() * h, 18 + Math.random() * 42, 10 + Math.random() * 24, Math.random() * 3, 0, 7);
+    ctx.fill();
+  }
+  speckle(ctx, w, h, ['#2c5c29', '#47803c', '#386f33', '#558c43'], 3200);
 });
 const gravelTex = () => canvasTex(256, 256, (ctx, w, h) => {
   ctx.fillStyle = '#6d6455'; ctx.fillRect(0, 0, w, h);
@@ -98,7 +106,7 @@ function buildRibbon(track, latA, latB, y, material, opts = {}) {
     void v;
     if (prevOk && prevVi >= 0) {
       const a = prevVi, b = prevVi + 1, c = vi, d = vi + 1;
-      idx.push(a, b, c, b, d, c);
+      idx.push(a, c, b, b, c, d); // winding: front face UP (was downward → road invisible, grass showed through)
     }
     prevVi = vi; prevOk = true; vi += 2;
   }
@@ -114,13 +122,13 @@ function buildRibbon(track, latA, latB, y, material, opts = {}) {
 
 export function buildEnvironment(scene, qualityKey) {
   const q = QUALITY_PRESETS[qualityKey];
-  // dusk sky dome (gradient shader, fog-free)
+  // daylight sky dome (gradient shader, fog-free)
   const skyMat = new THREE.ShaderMaterial({
     side: THREE.BackSide, depthWrite: false, fog: false,
     uniforms: {
-      top: { value: new THREE.Color(0x1c2a52) },
-      mid: { value: new THREE.Color(0x7a4a6e) },
-      horizon: { value: new THREE.Color(0xff9a4d) }
+      top: { value: new THREE.Color(0x2f7fe0) },
+      mid: { value: new THREE.Color(0x7ec3f4) },
+      horizon: { value: new THREE.Color(0xdff5ff) }
     },
     vertexShader: 'varying vec3 vP; void main(){ vP = position; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }',
     fragmentShader: `varying vec3 vP; uniform vec3 top; uniform vec3 mid; uniform vec3 horizon;
@@ -130,9 +138,9 @@ export function buildEnvironment(scene, qualityKey) {
   const sky = new THREE.Mesh(new THREE.SphereGeometry(4200, 20, 12), skyMat);
   scene.add(sky);
 
-  const hemi = new THREE.HemisphereLight(0x8090c8, 0x3a2c20, 0.85);
+  const hemi = new THREE.HemisphereLight(0xbfdcff, 0x52713f, 1.08);
   scene.add(hemi);
-  const sun = new THREE.DirectionalLight(0xffb36b, 2.0);
+  const sun = new THREE.DirectionalLight(0xfff2d8, 2.55);
   sun.castShadow = q.shadows;
   sun.shadow.mapSize.set(q.shadowMap, q.shadowMap);
   sun.shadow.camera.left = -95; sun.shadow.camera.right = 95;
@@ -140,7 +148,7 @@ export function buildEnvironment(scene, qualityKey) {
   sun.shadow.camera.near = 10; sun.shadow.camera.far = 520;
   sun.shadow.bias = -0.0006;
   scene.add(sun); scene.add(sun.target);
-  scene.fog = new THREE.Fog(0xcf8a5e, 260, q.fogFar);
+  scene.fog = new THREE.Fog(0xbcd9ee, 320, q.fogFar);
 
   // light rain particles (hidden unless rain weather)
   const rainCount = 850;
@@ -160,34 +168,52 @@ export function buildEnvironment(scene, qualityKey) {
   rain.frustumCulled = false;
   scene.add(rain);
 
-  return { sky, skyMat, hemi, sun, rain, rainPos, sunDir: new THREE.Vector3(-0.55, 0.38, -0.35).normalize() };
+  // soft white daylight clouds — a handful of big gradient sprites
+  const cloudTex = canvasTex(256, 128, (ctx, w, h) => {
+    const grad = ctx.createRadialGradient(w / 2, h / 2, 8, w / 2, h / 2, w / 2);
+    grad.addColorStop(0, 'rgba(255,255,255,0.72)');
+    grad.addColorStop(0.55, 'rgba(240,248,255,0.34)');
+    grad.addColorStop(1, 'rgba(240,248,255,0)');
+    ctx.fillStyle = grad; ctx.fillRect(0, 0, w, h);
+  }, false);
+  const cloudRnd = mulberry32(4242);
+  for (let i = 0; i < 13; i++) {
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: cloudTex, transparent: true, opacity: 0.5, depthWrite: false, fog: false }));
+    const ang = cloudRnd() * Math.PI * 2, rad = 1500 + cloudRnd() * 1600;
+    sp.position.set(Math.cos(ang) * rad, 300 + cloudRnd() * 260, Math.sin(ang) * rad);
+    sp.scale.set(900 + cloudRnd() * 900, 200 + cloudRnd() * 160, 1);
+    scene.add(sp);
+  }
+
+  // High daytime sun:
+  return { sky, skyMat, hemi, sun, rain, rainPos, sunDir: new THREE.Vector3(-0.42, 0.82, -0.28).normalize() };
 }
 
 export function applyWeather(env, scene, weather, qualityKey) {
   const q = QUALITY_PRESETS[qualityKey];
   if (weather === 'rain') {
-    env.skyMat.uniforms.top.value.set(0x2a3450);
-    env.skyMat.uniforms.mid.value.set(0x4c4a5e);
-    env.skyMat.uniforms.horizon.value.set(0x8a7a72);
-    env.sun.intensity = 0.85; env.sun.color.set(0xd8c8b8);
-    env.hemi.intensity = 0.95;
-    scene.fog.color.set(0x7a7684); scene.fog.near = 150; scene.fog.far = Math.min(q.fogFar, 650);
+    env.skyMat.uniforms.top.value.set(0x526a82);
+    env.skyMat.uniforms.mid.value.set(0x8496a8);
+    env.skyMat.uniforms.horizon.value.set(0xb5c1c9);
+    env.sun.intensity = 0.75; env.sun.color.set(0xdde6ee);
+    env.hemi.intensity = 1.05; env.hemi.color.set(0xb9c9d8); env.hemi.groundColor.set(0x4c6247);
+    scene.fog.color.set(0xaebbc5); scene.fog.near = 150; scene.fog.far = Math.min(q.fogFar, 650);
     env.rain.visible = true;
   } else if (weather === 'overcast') {
-    env.skyMat.uniforms.top.value.set(0x33406a);
-    env.skyMat.uniforms.mid.value.set(0x6e5a72);
-    env.skyMat.uniforms.horizon.value.set(0xd88a58);
-    env.sun.intensity = 1.35; env.sun.color.set(0xffc38a);
-    env.hemi.intensity = 0.95;
-    scene.fog.color.set(0xbb8464); scene.fog.near = 220; scene.fog.far = q.fogFar;
+    env.skyMat.uniforms.top.value.set(0x70879c);
+    env.skyMat.uniforms.mid.value.set(0xa8b8c4);
+    env.skyMat.uniforms.horizon.value.set(0xd8e1e7);
+    env.sun.intensity = 1.25; env.sun.color.set(0xf2f5f7);
+    env.hemi.intensity = 1.18; env.hemi.color.set(0xc8d6e2); env.hemi.groundColor.set(0x57764a);
+    scene.fog.color.set(0xc2cfda); scene.fog.near = 280; scene.fog.far = q.fogFar;
     env.rain.visible = false;
-  } else { // clear dusk — the game's identity
-    env.skyMat.uniforms.top.value.set(0x1c2a52);
-    env.skyMat.uniforms.mid.value.set(0x7a4a6e);
-    env.skyMat.uniforms.horizon.value.set(0xff9a4d);
-    env.sun.intensity = 2.0; env.sun.color.set(0xffb36b);
-    env.hemi.intensity = 0.85;
-    scene.fog.color.set(0xcf8a5e); scene.fog.near = 260; scene.fog.far = q.fogFar;
+  } else { // clear DAYLIGHT (owner request: no sunset)
+    env.skyMat.uniforms.top.value.set(0x2f7fe0);
+    env.skyMat.uniforms.mid.value.set(0x7ec3f4);
+    env.skyMat.uniforms.horizon.value.set(0xdff5ff);
+    env.sun.intensity = 2.55; env.sun.color.set(0xfff2d8);
+    env.hemi.intensity = 1.08; env.hemi.color.set(0xbfdcff); env.hemi.groundColor.set(0x52713f);
+    scene.fog.color.set(0xbcd9ee); scene.fog.near = 320; scene.fog.far = q.fogFar;
     env.rain.visible = false;
   }
 }
@@ -198,10 +224,10 @@ export function buildTrack(scene, track, qualityKey) {
   const R = track.roadHalfWidth, K = track.kerbWidth, RO = track.runoffWidth;
   const smp = track.samples;
 
-  const asphalt = new THREE.MeshStandardMaterial({ map: asphaltTex(), roughness: 0.94, metalness: 0 });
-  const pitAsphalt = new THREE.MeshStandardMaterial({ map: pitAsphaltTex(), roughness: 0.94 });
-  const kerbMat = new THREE.MeshStandardMaterial({ map: kerbTex(), roughness: 0.8 });
-  const gravel = new THREE.MeshStandardMaterial({ map: gravelTex(), roughness: 1 });
+  const asphalt = new THREE.MeshStandardMaterial({ map: asphaltTex(), roughness: 0.94, metalness: 0, side: THREE.DoubleSide });
+  const pitAsphalt = new THREE.MeshStandardMaterial({ map: pitAsphaltTex(), roughness: 0.94, side: THREE.DoubleSide });
+  const kerbMat = new THREE.MeshStandardMaterial({ map: kerbTex(), roughness: 0.8, side: THREE.DoubleSide });
+  const gravel = new THREE.MeshStandardMaterial({ map: gravelTex(), roughness: 1, side: THREE.DoubleSide });
 
   // ground
   const grassT = grassTex(); grassT.repeat.set(90, 90);
@@ -215,15 +241,41 @@ export function buildTrack(scene, track, qualityKey) {
   g.add(ground);
 
   // road / runoff / kerbs / pit lane
+  const pit = track.pit;
+  const pitSign = Math.sign(pit.lat);
+  const isCorner = (i) => Math.abs(smp.curv[i]) > 0.0042;
+  const isCornerAwayFromPitApron = (side) => (i) =>
+    isCorner(i) && !(side === pitSign && track.inPitApronRange(smp.s[i]));
   g.add(buildRibbon(track, -R, R, 0.02, asphalt, { vScale: 9 }));
   g.add(buildRibbon(track, R, R + RO, 0.012, gravel, { vScale: 7 }));
   g.add(buildRibbon(track, -R - RO, -R, 0.012, gravel, { vScale: 7 }));
-  const isCorner = (i) => Math.abs(smp.curv[i]) > 0.0042;
-  g.add(buildRibbon(track, R, R + K, 0.032, kerbMat, { vScale: 4.5, predicate: isCorner }));
-  g.add(buildRibbon(track, -R - K, -R, 0.032, kerbMat, { vScale: 4.5, predicate: isCorner }));
-  const pit = track.pit;
-  const pitA = Math.min(pit.lat - 4, pit.lat + 4), pitB = Math.max(pit.lat - 4, pit.lat + 4);
-  g.add(buildRibbon(track, pitA, pitB, 0.028, pitAsphalt,
+  g.add(buildRibbon(track, R, R + K, 0.032, kerbMat, { vScale: 4.5, predicate: isCornerAwayFromPitApron(1) }));
+  g.add(buildRibbon(track, -R - K, -R, 0.032, kerbMat, { vScale: 4.5, predicate: isCornerAwayFromPitApron(-1) }));
+
+  // One continuous paved pit platform from the ROAD EDGE to the garages,
+  // extended 120 m before entry and 120 m after exit. This is the aligned
+  // entry/exit blend: there is no longer a strip of soil between circuit
+  // and pit lane. The divider wall separates them in the middle section.
+  const apronOuterLat = (i) => {
+    const s = smp.s[i];
+    const fromStart = deltaS(pit.apronStartS, s, track.length);
+    const toEnd = deltaS(s, pit.apronEndS, track.length);
+    const taper = Math.min(Math.max(Math.min(fromStart, toEnd) / 70, 0), 1);
+    const mag = (R - 0.08) + (Math.abs(pit.outerLat) - (R - 0.08)) * taper;
+    return pitSign * mag;
+  };
+  const apronA = (i) => Math.min(pitSign * (R - 0.08), apronOuterLat(i));
+  const apronB = (i) => Math.max(pitSign * (R - 0.08), apronOuterLat(i));
+  g.add(buildRibbon(track, apronA, apronB, 0.027, pitAsphalt,
+    { vScale: 9, predicate: (i) => track.inPitApronRange(smp.s[i]) }));
+  // Slightly lighter BOX/service lane (divider → garages) over the platform.
+  const boxLaneMat = new THREE.MeshStandardMaterial({ color: 0x5a5e66, roughness: 0.95, side: THREE.DoubleSide });
+  const boxA = Math.min(pit.laneDividerLat, pit.outerLat), boxB = Math.max(pit.laneDividerLat, pit.outerLat);
+  g.add(buildRibbon(track, boxA, boxB, 0.031, boxLaneMat,
+    { vScale: 9, predicate: (i) => track.inPitRange(smp.s[i]) }));
+  // Painted yellow divider between FAST lane and BOX lane.
+  const laneLineMat = new THREE.MeshBasicMaterial({ color: 0xffd23e, side: THREE.DoubleSide });
+  g.add(buildRibbon(track, pit.laneDividerLat - 0.13, pit.laneDividerLat + 0.13, 0.038, laneLineMat,
     { vScale: 9, predicate: (i) => track.inPitRange(smp.s[i]) }));
 
   const tmpP = {};
@@ -239,15 +291,23 @@ export function buildTrack(scene, track, qualityKey) {
   const startLine = flatAt(new THREE.Mesh(new THREE.PlaneGeometry(R * 2, 2.4),
     new THREE.MeshStandardMaterial({ map: checkerTex(), roughness: 0.8 })), 0, 0, 0.045);
   g.add(startLine);
+  // Sector timing remains active in RaceManager, but NO sector lines are
+  // painted on the road (owner request).
+  const pitLineMat = new THREE.MeshBasicMaterial({ color: 0xffe98a, transparent: true, opacity: 0.9 });
+  const pitLineWidth = Math.abs(pit.outerLat - pit.innerLat);
+  const pitLineCentre = (pit.outerLat + pit.innerLat) / 2;
+  g.add(flatAt(new THREE.Mesh(new THREE.PlaneGeometry(pitLineWidth, 1.6), pitLineMat), pit.entryS, pitLineCentre, 0.046)); // pit entry line
+  g.add(flatAt(new THREE.Mesh(new THREE.PlaneGeometry(pitLineWidth, 1.6), pitLineMat), pit.exitS, pitLineCentre, 0.046)); // pit exit line
   const slotMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5 });
   for (const slot of track.gridSlots) {
     g.add(flatAt(new THREE.Mesh(new THREE.PlaneGeometry(2.5, 4.6), slotMat), slot.s, slot.lat, 0.04));
   }
   // pit boxes
-  const pitBoxMat = new THREE.MeshBasicMaterial({ color: 0xffe98a, transparent: true, opacity: 0.75 });
-  for (let k = -2; k <= 3; k++) {
-    g.add(flatAt(new THREE.Mesh(new THREE.PlaneGeometry(3.4, 6), pitBoxMat),
-      pit.boxS + k * 21, pit.lat + Math.sign(pit.lat) * 1.6, 0.042));
+  const pitBoxMat = new THREE.MeshBasicMaterial({ color: 0xffe98a, transparent: true, opacity: 0.7 });
+  const myBoxMat = new THREE.MeshBasicMaterial({ color: 0xff7a1a, transparent: true, opacity: 0.85 });
+  for (const b of pit.boxes) {
+    g.add(flatAt(new THREE.Mesh(new THREE.PlaneGeometry(4.8, 7.2),
+      b.index === CONFIG.pit.playerBoxIndex ? myBoxMat : pitBoxMat), b.s, pit.boxLat, 0.042));
   }
 
   // barriers (instanced, alternating colours via instance colour)
@@ -261,6 +321,7 @@ export function buildTrack(scene, track, qualityKey) {
   let bi = 0;
   for (let i = 0; i < track.count; i += stepIdx) {
     for (const side of [1, -1]) {
+      if (side === pitSign && track.inPitApronRange(smp.s[i])) continue;
       const dist = (side > 0 ? smp.barrierL[i] : smp.barrierR[i]) + 0.2;
       const x = smp.x[i] + smp.nx[i] * side * dist;
       const z = smp.z[i] + smp.nz[i] * side * dist;
@@ -274,6 +335,37 @@ export function buildTrack(scene, track, qualityKey) {
   }
   barriers.count = bi;
   g.add(barriers);
+
+  // pit divider wall (visual matches the physics wall in vehicle.js)
+  {
+    const wallIdx = [];
+    for (let i = 0; i < track.count; i += 3) if (track.inPitWallRange(smp.s[i])) wallIdx.push(i);
+    const wallGeo = new THREE.BoxGeometry(0.35, 0.55, track.ds * 3 + 0.25);
+    const wall = new THREE.InstancedMesh(wallGeo,
+      new THREE.MeshStandardMaterial({ roughness: 0.75, metalness: 0.05 }), wallIdx.length);
+    wallIdx.forEach((i, k) => {
+      qt.setFromAxisAngle(up, smp.phi[i]);
+      m4.compose(new THREE.Vector3(
+        smp.x[i] + smp.nx[i] * track.pit.wallLat, 0.28,
+        smp.z[i] + smp.nz[i] * track.pit.wallLat), qt, new THREE.Vector3(1, 1, 1));
+      wall.setMatrixAt(k, m4);
+      wall.setColorAt(k, col.set(k % 5 === 4 ? 0xd8b93a : 0xc9ced8)); // yellow every 5th panel
+    });
+    wall.count = wallIdx.length;
+    g.add(wall);
+    // orange cones marking the entry/exit gaps in the wall
+    const coneSpots = [];
+    for (const d of [-36, -22, -8]) coneSpots.push(pit.entryS + d);
+    for (const d of [8, 22, 36]) coneSpots.push(pit.exitS + d);
+    const cones = new THREE.InstancedMesh(new THREE.ConeGeometry(0.34, 0.8, 8),
+      new THREE.MeshStandardMaterial({ color: 0xff6a1a, roughness: 0.7 }), coneSpots.length);
+    coneSpots.forEach((cs, k) => {
+      getPointAt(track, cs, track.pit.wallLat, tmpP);
+      m4.compose(new THREE.Vector3(tmpP.x, 0.4, tmpP.z), new THREE.Quaternion(), new THREE.Vector3(1, 1, 1));
+      cones.setMatrixAt(k, m4);
+    });
+    g.add(cones);
+  }
 
   // tyre stacks at key corner outsides
   const stackSpots = [];
@@ -347,7 +439,7 @@ export function buildTrack(scene, track, qualityKey) {
   gantry.position.set(tmpP.x, 0, tmpP.z);
   gantry.rotation.y = tmpP.phi;
   // legs straddle BOTH road and pit lane on the pit side (local +X = +lat)
-  const pitSideX = Math.sign(track.pit.lat) * (Math.abs(track.pit.lat) + 6);
+  const pitSideX = Math.sign(track.pit.lat) * (Math.abs(track.pit.outerLat) + 2.5);
   const otherX = -Math.sign(track.pit.lat) * (R + 2);
   const legL = new THREE.Mesh(new THREE.BoxGeometry(0.5, 6.5, 0.5), gantryMat);
   legL.position.set(otherX, 3.25, 0); gantry.add(legL);
@@ -384,8 +476,8 @@ export function buildTrack(scene, track, qualityKey) {
   const garageMat = new THREE.MeshStandardMaterial({ color: 0x3a3f4a, roughness: 0.8 });
   const doorMats = [0x2050d8, 0xd8232f, 0x10a8a0, 0xf2c230, 0x8a3fd1, 0x38b83e].map(
     (c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.6 }));
-  for (let k = 0; k < 6; k++) {
-    getPointAt(track, pit.boxS - 55 + k * 22, pit.lat + Math.sign(pit.lat) * 9.5, tmpP);
+  for (let k = 0; k < pit.boxes.length; k++) {
+    getPointAt(track, pit.boxes[k].s, pit.boxLat + Math.sign(pit.lat) * 7.4, tmpP);
     const gar = new THREE.Group();
     gar.position.set(tmpP.x, 0, tmpP.z);
     gar.rotation.y = tmpP.phi;
@@ -393,16 +485,66 @@ export function buildTrack(scene, track, qualityKey) {
     shell.geometry.rotateY(Math.PI / 2);
     shell.position.y = 2.75; shell.castShadow = q.shadows;
     gar.add(shell);
-    const door = new THREE.Mesh(new THREE.BoxGeometry(7.5, 3.6, 0.2), doorMats[k]);
+    const isPlayerBox = k === CONFIG.pit.playerBoxIndex;
+    const door = new THREE.Mesh(new THREE.BoxGeometry(7.5, 3.6, 0.2),
+      isPlayerBox ? new THREE.MeshStandardMaterial({ color: 0xff7a1a, roughness: 0.55 }) : doorMats[k % doorMats.length]);
     door.geometry.rotateY(Math.PI / 2);
     door.position.set(-Math.sign(pit.lat) * 3.6, 1.8, 0); // door faces the pit lane / track
     gar.add(door);
+    const label = new THREE.Mesh(new THREE.PlaneGeometry(9.5, 1.5),
+      new THREE.MeshStandardMaterial({
+        map: boardTex(isPlayerBox ? `YOUR GARAGE` : `BOX ${k + 1}`, isPlayerBox ? '#f06a08' : '#16213e', '#ffffff'),
+        roughness: 0.7
+      }));
+    label.position.set(-Math.sign(pit.lat) * 3.85, 4.9, 0);
+    label.rotation.y = -Math.sign(pit.lat) * Math.PI / 2;
+    gar.add(label);
     g.add(gar);
   }
 
-  // floodlight poles
+  // Marshal posts with WAVED YELLOW FLAGS (12 posts, 4 per sector).
+  // Flags are hidden on green; updateMarshalFlags() animates the active sector.
+  const marshalPosts = [];
+  {
+    const poleMat2 = new THREE.MeshStandardMaterial({ color: 0xd8d8de, roughness: 0.45, metalness: 0.55 });
+    const suitMat = new THREE.MeshStandardMaterial({ color: 0xff6a1a, roughness: 0.85 });
+    const helmetMat2 = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.5 });
+    const flagMat = new THREE.MeshBasicMaterial({ color: 0xffd51f, side: THREE.DoubleSide });
+    for (let k = 0; k < 12; k++) {
+      const sPos = ((k + 0.5) / 12) * track.length;
+      getPointAt(track, sPos, 0, tmpP);
+      let side = tmpP.curv > 0 ? -1 : 1; // outside of corners where possible
+      if (track.inPitApronRange(sPos) && side === pitSign) side = -pitSign; // never in the pit lanes
+      const barrier = side > 0 ? smp.barrierL[tmpP.idx] : smp.barrierR[tmpP.idx];
+      getPointAt(track, sPos, side * Math.max(barrier - 1.6, R + 2.5), tmpP);
+      const post = new THREE.Group();
+      post.position.set(tmpP.x, 0, tmpP.z);
+      post.rotation.y = tmpP.phi;
+      const body = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.3, 1.05, 8), suitMat);
+      body.position.y = 0.78; body.castShadow = q.shadows; post.add(body);
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.19, 10, 8), helmetMat2);
+      head.position.y = 1.48; post.add(head);
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.045, 2.35, 6), poleMat2);
+      pole.position.set(-side * 0.42, 1.45, 0.12); pole.rotation.z = side * 0.16; post.add(pole);
+      const flagPivot = new THREE.Group();
+      flagPivot.position.set(-side * 0.42, 2.48, 0.12);
+      const flag = new THREE.Mesh(new THREE.PlaneGeometry(1.18, 0.76), flagMat);
+      flag.position.x = -side * 0.59; // extends toward the circuit
+      flagPivot.add(flag);
+      flagPivot.visible = false;
+      post.add(flagPivot);
+      g.add(post);
+      marshalPosts.push({
+        sector: Math.min(2, Math.floor(sPos / track.sectorLength)),
+        flagPivot, flag, phase: k * 1.37
+      });
+    }
+  }
+  g.userData.marshalPosts = marshalPosts;
+
+  // light poles (unlit in daylight; retained as circuit furniture)
   const poleMat = new THREE.MeshStandardMaterial({ color: 0x3c414c, roughness: 0.5, metalness: 0.6 });
-  const headMat = new THREE.MeshStandardMaterial({ color: 0x222222, emissive: 0xfff2cf, emissiveIntensity: 1.6 });
+  const headMat = new THREE.MeshStandardMaterial({ color: 0x222222, emissive: 0xfff2cf, emissiveIntensity: 0.18 });
   const poleGeo = new THREE.CylinderGeometry(0.16, 0.22, 14, 6);
   const headGeo = new THREE.BoxGeometry(1.7, 0.7, 0.3);
   let poleN = 0;
@@ -429,6 +571,7 @@ export function buildTrack(scene, track, qualityKey) {
     const i = (rnd() * track.count) | 0;
     const side = rnd() > 0.5 ? 1 : -1;
     const dist = 26 + rnd() * 110;
+    if (side === pitSign && track.inPitApronRange(smp.s[i]) && dist < 38) continue;
     const x = smp.x[i] + smp.nx[i] * side * dist;
     const z = smp.z[i] + smp.nz[i] * side * dist;
     let ok = true;
@@ -451,8 +594,8 @@ export function buildTrack(scene, track, qualityKey) {
   crownInst.castShadow = q.shadows && qualityKey !== 'low';
   g.add(trunkInst); g.add(crownInst);
 
-  // distant dusk hills
-  const hillMat = new THREE.MeshStandardMaterial({ color: 0x2c3350, roughness: 1 });
+  // distant daylight hills
+  const hillMat = new THREE.MeshStandardMaterial({ color: 0x5d7f68, roughness: 1 });
   for (let k = 0; k < 9; k++) {
     const ang = (k / 9) * Math.PI * 2 + 0.3;
     const rad = 1400 + (k % 3) * 220;
@@ -463,4 +606,18 @@ export function buildTrack(scene, track, qualityKey) {
 
   scene.add(g);
   return g;
+}
+
+/** Animate waved yellow flags at marshal posts in the affected sectors. */
+export function updateMarshalFlags(trackGroup, yellowSectors, timeS) {
+  const posts = (trackGroup && trackGroup.userData && trackGroup.userData.marshalPosts) || [];
+  const active = new Set(yellowSectors || []);
+  for (const post of posts) {
+    const on = active.has(post.sector);
+    post.flagPivot.visible = on;
+    if (!on) continue;
+    post.flagPivot.rotation.y = Math.sin(timeS * 7 + post.phase) * 0.58;
+    post.flagPivot.rotation.z = Math.sin(timeS * 9.3 + post.phase) * 0.24;
+    post.flag.scale.y = 1 + Math.sin(timeS * 11 + post.phase) * 0.07;
+  }
 }
